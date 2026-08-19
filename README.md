@@ -54,8 +54,8 @@ The protocol went through an adversarial design review before publication; the f
 
 ## Open science
 
-Pre-results protocol release, immutable configuration manifests, seeds, raw logs, analysis scripts, and a failed-run ledger are all part of the plan. Code, configs, and logs are released under permissive licenses; checkpoints only where dataset/model licensing permits.
+Pre-results protocol release, immutable configuration manifests, seeds, raw logs, analysis scripts, and a failed-run ledger are all part of the plan. Code and documentation are released under this repository's license (all rights reserved); checkpoints only where dataset/model licensing permits.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+All rights reserved — see [LICENSE](LICENSE).
