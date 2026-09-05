@@ -49,8 +49,9 @@ sigma0 = 0, executed through the same replacement/code path whenever possible.
 ## C1–C3: Annealed screen
 Cosine RMS-relative sigma0 values of 0.01, 0.03, and 0.05, one exploratory seed each.
 
-## C4: Constant noise
-The selected screen sigma held constant throughout training, testing non-annealed stochastic regularization.
+## C4: Constant noise — two arms (locked, basis: docs/05-blocker-resolution.md §P2)
+- **C4a: variance-matched, σ_const = 0.6124·σ0.** For f(p) = 0.5(1+cos πp), ∫₀¹ f(p)² dp = 3/8, so σ_const = σ0·√(3/8) = 0.6124·σ0 delivers the same integrated noise variance as the annealed schedule. This is the arm that separates "the schedule shape matters" from "any noise at this dose is equally good" — the annealing-specific claim requires C4a.
+- **C4b: σ0 held constant.** The original specification, delivering 8/3 = 2.67× the annealed noise dose; retained as the "too much noise" extreme that documents why annealing exists.
 
 ## C5: DropConnect comparator
 A tuned multiplicative weight-noise comparator with comparable module coverage.
@@ -77,9 +78,9 @@ Select one candidate using a prewritten fixed rule: final deterministic validati
 Do not select based on best checkpoint, visual curve preference, or unlogged trial reruns.
 
 ## Phase 2: Confirmation
-Run baseline and the single selected annealed configuration on at least 5 paired seed pairs; 8–10 pairs are preferred if budget permits.
+Run baseline and the single selected annealed configuration on at least 6 paired seed pairs (minimum; 8–10 are targeted — one-sided α=0.05 requires n≥6, and n=8 gives 80% power at a 1.0·SD effect; see docs/05-blocker-resolution.md §P1 and SAP §Sample Size).
 Pair model initialization, data order, dropout, optimizer settings, and all non-perturbation RNG streams.
-Run the selected constant-noise control on the same seeds before claiming that annealing itself matters.
+Run the selected constant-noise controls (C4a variance-matched at 0.6124·σ0 and C4b at σ0) on the same seeds before claiming that annealing itself matters.
 
 ## Phase 3: Ablations
 Schedule shape, target modules, scaling convention, DropConnect, RWP comparator, weight-decay/dropout controls, and initialization sensitivity.
