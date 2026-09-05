@@ -56,7 +56,7 @@ Update every eligible module with this scalar once per optimizer update. Log req
 
 # Unit-Test Suite
 Zero-noise equivalence: sigma=0 gives matching logits, loss, and gradients versus original Linear modules.
-Evaluation determinism: repeated eval-mode calls yield identical outputs with enabled=true and nonzero configured sigma.
+Evaluation determinism: (a) eval-mode outputs are byte-identical to a sigma=0 run — perturbation provably off, and (b) training-mode determinism: two training forwards with the same generator state and same sigma produce identical logits (the property that actually matters for resume reproducibility).
 Noise existence: nonzero training sigma produces nonzero realized perturbation.
 Endpoint correctness: first step equals sigma0 and last step equals exact zero.
 Gradient connectivity: base weight has finite gradients after backward.

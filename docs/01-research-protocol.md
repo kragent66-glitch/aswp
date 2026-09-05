@@ -56,6 +56,9 @@ Cosine RMS-relative sigma0 values of 0.01, 0.03, and 0.05, one exploratory seed 
 ## C5: DropConnect comparator
 A tuned multiplicative weight-noise comparator with comparable module coverage.
 
+## C5b: Vanilla dropout comparator
+Activation dropout — the standard, cheapest, best-understood regularizer — tuned with the SAME fixed budget and the same screen rule as the treatment (symmetric effort; the screen rule thresholds in Phase 1 apply unchanged). Naive per-weight variance matching is explicitly NOT used as the tuning target: sigma0 in [0.01, 0.05] corresponds to per-weight drop rates of roughly 0.01–0.5%, while standard dropout operates at 5–20% — matched-strength dropout is not a meaningful comparator regime (calibration in docs/05-blocker-resolution.md §P2). The paper must state this dose asymmetry and report the tuned dropout level. This arm answers the practical question: does ASWP beat just cranking dropout at equal cost?
+
 ## C6: RWP comparator
 Optional reproduction of a documented RWP formulation where engineering budget permits.
 
