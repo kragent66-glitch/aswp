@@ -207,6 +207,73 @@ def test_resume_rejects_a_different_stream_length():
         other.load_state_dict(state)
 
 
+def test_a_malformed_sampler_checkpoint_is_refused():
+    """Three ways a same-length state can be wrong, and one that must stay legal.
+
+    The length check alone accepted an order that repeated some blocks and omitted others: the
+    load succeeded and the run continued while seeing different data than the run it resumed.
+    """
+    import dataclasses
+
+    ids = make_ids(512 * 8)
+    sampler = BlockSampler(ids, ctx=512, seed=11)
+    sampler.next_block()
+    good = sampler.state_dict()
+
+    duplicated = dataclasses.replace(good, order=[good.order[0]] * len(good.order))
+    with pytest.raises(ValueError, match="repeats or omits"):
+        sampler.load_state_dict(duplicated)
+
+    out_of_range = dataclasses.replace(good, order=[sampler.n_blocks] + list(good.order[1:]))
+    with pytest.raises(ValueError, match="out-of-range"):
+        sampler.load_state_dict(out_of_range)
+
+    with pytest.raises(ValueError, match="outside 0"):
+        sampler.load_state_dict(dataclasses.replace(good, position=sampler.n_blocks + 1))
+    with pytest.raises(ValueError, match="outside 0"):
+        sampler.load_state_dict(dataclasses.replace(good, position=-1))
+
+    # An exhausted epoch is a real state: the next draw rolls over into the next epoch.
+    sampler.load_state_dict(dataclasses.replace(good, position=sampler.n_blocks))
+    assert sampler.next_block().shape == (512,)
+    sampler.load_state_dict(good)
+    assert sampler.position == 1
+
+
+def test_a_refused_sampler_state_leaves_the_sampler_unchanged():
+    """Validation happens before assignment, so a refusal cannot half-apply.
+
+    The first version of these checks assigned the epoch, position and generator and only then
+    validated the permutation -- the exception was raised with the sampler already mutated.
+    """
+    import dataclasses
+
+    ids = make_ids(512 * 4)
+    sampler = BlockSampler(ids, ctx=512, seed=5)
+    sampler.next_block()
+    at_refusal = sampler.state_dict()
+
+    # A reference restored to exactly this state defines what the sampler must do next. (Taking
+    # `next_block()` directly would answer a different question: it would give the block *after*
+    # the state captured, which is not what the next call on `sampler` returns.)
+    reference = BlockSampler(ids, ctx=512, seed=999)
+    reference.load_state_dict(at_refusal)
+    expected_next = reference.next_block()
+
+    bad = dataclasses.replace(at_refusal, position=at_refusal.n_blocks + 3,
+                              order=list(reversed(at_refusal.order)))
+    with pytest.raises(ValueError):
+        sampler.load_state_dict(bad)
+
+    after = sampler.state_dict()
+    assert after.position == at_refusal.position
+    assert after.epoch == at_refusal.epoch
+    assert list(after.order) == list(at_refusal.order)
+    assert after.generator_state == at_refusal.generator_state
+    assert np.array_equal(sampler.next_block(), expected_next)
+    assert np.array_equal(sampler.next_block(), reference.next_block())
+
+
 def test_sampler_rejects_degenerate_configurations():
     with pytest.raises(ValueError):
         BlockSampler(make_ids(100), ctx=1)
