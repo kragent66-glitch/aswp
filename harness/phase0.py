@@ -35,6 +35,7 @@ from .data import BlockSampler
 from .loop import evaluate, train
 from .model import CANDIDATE_CONFIGS, ModelConfig, TinyDecoder
 from .perturbation import AnnealedPerturbation, AnnealedLinear, eligible_module_names
+from .perturbation import realized_relative_perturbation
 
 
 def _rss_mb() -> float:
@@ -195,28 +196,38 @@ def check_shapes_dtypes(model: ModelConfig, device: str) -> tuple[bool, dict]:
     evidence["accum_vs_single_grad_max_abs_diff"] = max_diff
     ok &= max_diff < 1e-5
 
-    if device == "cpu":
-        try:
-            m16 = TinyDecoder(model).to(torch.bfloat16).to(device)
-            ctl16 = AnnealedPerturbation(m16, sigma0=0.05, total_steps=5, perturbation_seed=3)
-            ctl16.start_step(1)
-            with torch.no_grad():
-                out16 = m16(torch.from_numpy(_ids(model.max_seq_len).astype(np.int64))
-                            .unsqueeze(0).to(device))
-            from .perturbation import realized_relative_perturbation
-            name = sorted(ctl16.modules)[0]
-            mod = ctl16.modules[name]
-            ratio = realized_relative_perturbation(mod.base.weight, mod.effective_weight())
-            evidence["bf16_forward_ok"] = True
-            evidence["bf16_effective_weight_dtype"] = str(mod.effective_weight().dtype)
-            evidence["bf16_realized_perturbation"] = ratio
-            evidence["bf16_expected_perturbation"] = mod.sigma
-            ok &= str(mod.effective_weight().dtype) == "torch.bfloat16"
-            ok &= abs(ratio / mod.sigma - 1.0) < 0.10
-        except Exception as exc:  # bf16 CPU support varies by op; recorded, not hidden
-            evidence["bf16_error"] = f"{type(exc).__name__}: {exc}"
-    else:
-        evidence["bf16_error"] = "not attempted: device is not cpu"
+    # bf16 on whatever device is asked for. Checking this only on CPU is how a real bug got
+    # through: fp32 RoPE tables upcast q and k to fp32 while v stayed bf16, which CPU promotes
+    # silently and CUDA refuses outright.
+    try:
+        m16 = TinyDecoder(model).to(torch.bfloat16).to(device)
+        ctl16 = AnnealedPerturbation(m16, sigma0=0.05, total_steps=5, perturbation_seed=3)
+        ctl16.start_step(1)
+        tok16 = torch.from_numpy(_ids(2 * model.max_seq_len).astype(np.int64)) \
+            .reshape(2, model.max_seq_len).to(device)
+        hidden = m16.hidden_states(tok16)
+        evidence["bf16_hidden_dtype"] = str(hidden.dtype)
+        out16 = m16.logits_from_hidden(hidden)
+        loss16 = torch.nn.functional.cross_entropy(
+            out16[:, :-1, :].reshape(-1, model.vocab_size).float(), tok16[:, 1:].reshape(-1))
+        loss16.backward()
+        finite = all(bool(torch.isfinite(p.grad).all())
+                     for p in m16.parameters() if p.grad is not None)
+        name = sorted(ctl16.modules)[0]
+        mod = ctl16.modules[name]
+        ratio = realized_relative_perturbation(mod.base.weight, mod.effective_weight())
+        evidence["bf16_forward_backward_ok"] = True
+        evidence["bf16_grads_finite"] = finite
+        evidence["bf16_effective_weight_dtype"] = str(mod.effective_weight().dtype)
+        evidence["bf16_realized_perturbation"] = ratio
+        evidence["bf16_expected_perturbation"] = mod.sigma
+        ok &= str(hidden.dtype) == "torch.bfloat16"
+        ok &= finite
+        ok &= str(mod.effective_weight().dtype) == "torch.bfloat16"
+        ok &= abs(ratio / mod.sigma - 1.0) < 0.10
+    except Exception as exc:  # recorded, not hidden: a silent skip here hid a real bug once
+        evidence["bf16_error"] = f"{type(exc).__name__}: {exc}"
+        ok = False
     return ok, evidence
 
 

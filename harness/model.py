@@ -94,9 +94,17 @@ def rope_cache(seq_len: int, head_dim: int, base: float, device, dtype=torch.flo
 
 
 def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """x: (B, H, T, Dh); cos/sin: (T, Dh/2). Rotates adjacent even/odd pairs."""
-    cos = cos[None, None, :, :]
-    sin = sin[None, None, :, :]
+    """x: (B, H, T, Dh); cos/sin: (T, Dh/2). Rotates adjacent even/odd pairs.
+
+    The tables are cast to x's dtype rather than left in fp32. Multiplying a bf16 tensor by an
+    fp32 one promotes the result to fp32, which silently upcast q and k to fp32 while v stayed
+    bf16 -- CUDA's scaled_dot_product_attention then refuses the mixed dtypes outright
+    ("Expected query, key, and value to have the same dtype") while CPU promotes silently, so
+    the bug passed every CPU check and only appeared on the GPU. The tables are still *built*
+    in fp32 and cast at use, which keeps the precision where it matters.
+    """
+    cos = cos.to(x.dtype)[None, None, :, :]
+    sin = sin.to(x.dtype)[None, None, :, :]
     x1, x2 = x[..., 0::2], x[..., 1::2]
     return torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1).flatten(-2)
 
@@ -179,7 +187,15 @@ class TinyDecoder(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+    def hidden_states(self, tokens: torch.Tensor) -> torch.Tensor:
+        """The body's output, (B, T, d_model) -- everything except the vocabulary projection.
+
+        Split out from `forward` so the loss can be computed in slices: the logits tensor is
+        B*T*vocab, which at the decided batch shape (80 x 512) is 40,960 x 50,257 x 4 B =
+        8.2 GB in fp32 -- larger than a 16 GB GPU can hold alongside the gradient buffer of the
+        same size. The tensors that must be sliced are the logits, not the sequence: slicing
+        the sequence would change each token's attention context and therefore the loss.
+        """
         B, T = tokens.shape
         if T > self.cfg.max_seq_len:
             raise ValueError(f"sequence length {T} exceeds max_seq_len {self.cfg.max_seq_len}")
@@ -187,7 +203,14 @@ class TinyDecoder(nn.Module):
         x = self.tok_emb(tokens)
         for blk in self.blocks:
             x = blk(x, cos, sin)
-        return self.lm_head(self.norm_f(x))
+        return self.norm_f(x)
+
+    def logits_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+        """The vocabulary projection alone, so it can be applied to a slice of positions."""
+        return self.lm_head(hidden)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        return self.logits_from_hidden(self.hidden_states(tokens))
 
     # ---------------------------------------------------------------- accounting
     def param_counts(self) -> dict:

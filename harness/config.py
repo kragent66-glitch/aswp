@@ -119,6 +119,11 @@ class RunConfig:
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     evaluation: EvalConfig = field(default_factory=EvalConfig)
     precision: str = "fp32"           # "fp32" | "bf16"
+    #: Logit-chunk size for the training loss. An implementation parameter, not an
+    #: experimental one: the loss is a mean over tokens, so slicing the vocabulary
+    #: projection changes nothing except the peak memory. Recorded because the run's
+    #: numerics (summation order) depend on it.
+    loss_chunk_tokens: int = 8192
     data_dir: str = "data"
     out_dir: str = "runs"
     stage: str = "phase0"             # "phase0" | "screen" | "confirm"
@@ -172,6 +177,7 @@ class RunConfig:
             "optimizer": self.optimizer.to_dict(),
             "evaluation": self.evaluation.to_dict(),
             "precision": self.precision,
+            "loss_chunk_tokens": self.loss_chunk_tokens,
             "data_dir": self.data_dir,
             "out_dir": self.out_dir,
             "notes": self.notes,

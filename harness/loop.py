@@ -87,6 +87,67 @@ class Ledger:
         return [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
 
 
+def chunked_lm_loss(model: TinyDecoder, tokens, *, chunk_tokens: int, scale: float = 1.0) -> float:
+    """Mean cross-entropy in nats/token, accumulating gradients in vocabulary-slice chunks.
+
+    The reason this exists is arithmetic, not taste. The logits tensor is B*T*vocab; at the
+    decided shape (80 sequences x 512) that is 40,960 x 50,257 = 2.06e9 elements, so 8.2 GB in
+    fp32 -- and cross-entropy needs a buffer of the same size for its own gradient. A 16 GB
+    T4 cannot hold that, which is exactly how the first GPU run of the cost segment died.
+
+    Slicing the *vocabulary projection* changes nothing about the loss: the head is a
+    per-position linear map and the loss is a mean over tokens, so the only difference is the
+    order of summation. Slicing the *sequence* would not be equivalent -- it would remove each
+    token's left context -- which is why the body runs on the full batch and only the head is
+    chunked. `tests/test_harness_loop.py` pins the equivalence against the unchunked path.
+
+    It is two-stage because a naive loop is wrong twice over. All chunks are outputs of the
+    *same* hidden-state graph, so the first chunk's `backward()` frees the intermediates the
+    rest need ("Trying to backward through the graph a second time"); and adding
+    `retain_graph=True` to fix that keeps every chunk's logits alive, which is precisely the
+    memory this function exists to save. So the head gradients accumulate against a detached
+    leaf (`leaf`), whose own gradient is then propagated into the body exactly once. Peak
+    memory is the body's activations plus one chunk's logits and its gradient.
+
+    Gradients are accumulated scaled by `scale` (1/grad_accum for accumulation), and the
+    caller's instability policy still works because a non-finite chunk returns NaN before
+    anything is backwarded for it.
+    """
+    import torch
+
+    hidden = model.hidden_states(tokens)
+    B, T, d_model = hidden.shape
+    if not hidden.requires_grad:
+        raise RuntimeError(
+            "chunked_lm_loss needs gradients: call it on a model whose parameters require "
+            "grad (not under torch.no_grad and not in inference mode)"
+        )
+    flat = hidden[:, :-1, :].reshape(-1, d_model)
+    targets = tokens[:, 1:].reshape(-1)
+    total = int(flat.shape[0])
+    if total == 0:
+        raise ValueError("no tokens to score: the batch must have at least two positions")
+
+    leaf = flat.detach().requires_grad_(True)
+    nats = 0.0
+    for start in range(0, total, chunk_tokens):
+        stop = min(start + chunk_tokens, total)
+        logits = model.logits_from_hidden(leaf[start:stop])
+        chunk_sum = torch.nn.functional.cross_entropy(logits, targets[start:stop],
+                                                     reduction="sum")
+        value = float(chunk_sum.detach())
+        if not math.isfinite(value):
+            return float("nan")
+        (chunk_sum * (scale / total)).backward()
+        nats += value
+        del logits, chunk_sum
+
+    grad_hidden = torch.zeros_like(hidden)
+    grad_hidden[:, :-1, :] = leaf.grad.reshape(B, T - 1, d_model)
+    torch.autograd.backward(hidden, grad_hidden)
+    return nats / total
+
+
 def evaluate(model: TinyDecoder, ids, *, ctx: int, batch_blocks: int, device: str,
              bytes_per_token: float) -> dict:
     """Deterministic validation NLL through the shared scoring path."""
@@ -260,12 +321,9 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
         non_finite = False
         for _ in range(cfg.budget.grad_accum):
             batch = torch.from_numpy(sampler.next_batch(cfg.budget.batch_sequences)).to(device)
-            logits = model(batch)
-            loss = torch.nn.functional.cross_entropy(
-                logits[:, :-1, :].reshape(-1, logits.shape[-1]),
-                batch[:, 1:].reshape(-1),
-            )
-            loss_value = float(loss.detach())
+            loss_value = chunked_lm_loss(model, batch,
+                                        chunk_tokens=cfg.loss_chunk_tokens,
+                                        scale=1.0 / cfg.budget.grad_accum)
             if not math.isfinite(loss_value):
                 # A NaN/Inf update would poison every weight, so this step's update is
                 # skipped -- but the event is recorded and counted, never silently dropped:
@@ -273,7 +331,7 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
                 # quietly excluded from the paired comparison.
                 non_finite = True
                 break
-            (loss / cfg.budget.grad_accum).backward()
+            # the gradients for this microbatch were accumulated inside chunked_lm_loss
             micro_losses.append(loss_value)
         if non_finite:
             instability_events += 1

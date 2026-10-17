@@ -335,7 +335,7 @@ def test_a_non_finite_loss_is_flagged_rather_than_silently_dropped(tmp_path):
 
     cfg = tiny_cfg(annealed_arm(0.03), tmp_path / "a", steps=3)
     ids = train_ids(2048)
-    original = _Tiny.forward
+    original = _Tiny.hidden_states
     calls = {"n": 0}
 
     def poisoned(self, tokens):                     # noqa: ANN001
@@ -343,12 +343,14 @@ def test_a_non_finite_loss_is_flagged_rather_than_silently_dropped(tmp_path):
         out = original(self, tokens)
         return out * float("nan") if calls["n"] == 2 else out
 
-    _Tiny.forward = poisoned
+    # the loop computes the loss through hidden_states -> logits_from_hidden, so that is the
+    # method to poison; poisoning forward() would no longer intercept the training path
+    _Tiny.hidden_states = poisoned
     try:
         summary = train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
                         out_root=tmp_path / "a", log_every=9)
     finally:
-        _Tiny.forward = original
+        _Tiny.hidden_states = original
 
     rows = Ledger(tmp_path / "a" / cfg.run_id).read()
     flagged = [r for r in rows if r.get("event") == "non_finite_loss"]
@@ -357,6 +359,78 @@ def test_a_non_finite_loss_is_flagged_rather_than_silently_dropped(tmp_path):
     assert summary["instability_events"] == 1
     assert summary["steps"] == 3, "the run must complete and be retained, not dropped"
     assert summary["endpoint"]["confirmatory-primary"]["nll_nats_per_token"] > 0
+
+
+def test_chunked_loss_equals_the_unchunked_loss():
+    """The vocabulary-slice must not change the loss or the gradients.
+
+    This is the equivalence that makes the chunking safe to use for real runs: the head is a
+    per-position linear map and the loss is a mean over tokens, so slicing changes only the
+    summation order. The chunk size is deliberately not a divisor of the token count, so the
+    final partial chunk is exercised too.
+    """
+    from harness.loop import chunked_lm_loss
+
+    tokens = torch.from_numpy(train_ids(4 * CTX).astype(np.int64)).reshape(4, CTX)
+    model = TinyDecoder(SMOKE)
+
+    logits = model(tokens)
+    full = torch.nn.functional.cross_entropy(
+        logits[:, :-1, :].reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1))
+    full.backward()
+    full_loss = float(full.detach())
+    full_grads = {n: p.grad.detach().clone() for n, p in model.named_parameters()
+                  if p.grad is not None}
+    assert full_grads, "the unchunked path must produce gradients"
+
+    model.zero_grad(set_to_none=True)
+    chunked_loss = chunked_lm_loss(model, tokens, chunk_tokens=7,
+                                   scale=1.0 / 2.0)   # a scale, as accumulation would use
+    chunked_grads = {n: p.grad.detach().clone() for n, p in model.named_parameters()
+                     if p.grad is not None}
+
+    assert chunked_loss == pytest.approx(full_loss, rel=1e-5)
+    assert set(chunked_grads) == set(full_grads)
+    for name, grad in full_grads.items():
+        assert torch.allclose(chunked_grads[name], grad * 0.5, atol=1e-6, rtol=1e-4), name
+    # everything above was driven by position-slicing the head only; the body ran once
+    assert model.hidden_states(tokens).shape == (4, CTX, SMOKE.d_model)
+
+
+def test_a_single_token_chunk_still_matches():
+    """The extreme case, which would expose any per-chunk state that is not reset."""
+    from harness.loop import chunked_lm_loss
+
+    tokens = torch.from_numpy(train_ids(2 * CTX).astype(np.int64)).reshape(2, CTX)
+    reference = TinyDecoder(SMOKE)
+    chunked_model = TinyDecoder(SMOKE)
+    chunked_model.load_state_dict(reference.state_dict())
+
+    logits = reference(tokens)
+    expected = float(torch.nn.functional.cross_entropy(
+        logits[:, :-1, :].reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1)).detach())
+
+    got = chunked_lm_loss(chunked_model, tokens, chunk_tokens=1)
+    assert got == pytest.approx(expected, rel=1e-5)
+
+
+def test_bf16_forward_and_backward_survive_the_attention_path():
+    """The bug this pins: fp32 RoPE tables silently upcast q and k, leaving v in bf16.
+
+    CUDA's scaled_dot_product_attention rejects that mix outright; CPU promotes it silently, so
+    this check is worth having on any device, and the GPU cost segment is where it caught it.
+    """
+    model = TinyDecoder(SMOKE).to(torch.bfloat16)
+    tokens = torch.from_numpy(train_ids(2 * CTX).astype(np.int64)).reshape(2, CTX)
+    hidden = model.hidden_states(tokens)
+    assert hidden.dtype == torch.bfloat16, "the body must not silently upcast to fp32"
+    loss = torch.nn.functional.cross_entropy(
+        model.logits_from_hidden(hidden[:, :-1, :]).reshape(-1, SMOKE.vocab_size).float(),
+        tokens[:, 1:].reshape(-1))
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert all(p.dtype == torch.bfloat16 for p in model.parameters())
 
 
 def test_the_ledger_records_what_a_budget_decision_needs(tmp_path):
