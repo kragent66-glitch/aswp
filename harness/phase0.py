@@ -353,24 +353,27 @@ def check_instability_policy(model: ModelConfig, device: str) -> tuple[bool, dic
     ids = _ids(2048, model.vocab_size)
     streams = _streams(_ids(1024, model.vocab_size))
 
-    original_forward = TinyDecoder.forward
+    original_hidden_states = TinyDecoder.hidden_states
     calls = {"n": 0}
 
     def poisoned(self, tokens):           # noqa: ANN001
         calls["n"] += 1
-        out = original_forward(self, tokens)
+        out = original_hidden_states(self, tokens)
         if calls["n"] == 2:               # exactly one step's forward returns NaN
             return out * float("nan")
         return out
 
-    TinyDecoder.forward = poisoned
+    # The loop computes the loss as hidden_states -> logits_from_hidden -> chunked CE, so
+    # hidden_states is the method that intercepts the training path. Poisoning forward() no
+    # longer does, and a check that poisons the wrong method reports a false pass.
+    TinyDecoder.hidden_states = poisoned
     try:
         out = _workdir()
         summary = train(cfg, device=device, train_ids=ids, eval_streams=streams,
                         out_root=out, log_every=10)
         rows = _ledger(out / cfg.run_id)
     finally:
-        TinyDecoder.forward = original_forward
+        TinyDecoder.hidden_states = original_hidden_states
 
     flagged = [r for r in rows if r.get("event") == "non_finite_loss"]
     skipped = [r for r in rows if r.get("optimizer_step_taken") is False]

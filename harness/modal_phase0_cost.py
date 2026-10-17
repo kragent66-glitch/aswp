@@ -71,7 +71,7 @@ def host_repo() -> Path | None:
 HOST_REPO = host_repo()
 
 #: The hourly rate Modal bills per GPU, used only to turn throughput into a cost.
-GPU_RATES = {"T4": 0.59, "L4": 0.80, "A10": 1.10}
+GPU_RATES = {"T4": 0.59, "L4": 0.80, "A10": 1.10, "A100": 2.10, "H100": 3.90}
 USABLE_BUDGET = 30.0 * 0.75
 SCREEN_RUNS = 4
 ARMS = 3
@@ -234,18 +234,34 @@ def endpoint_eval_cost(batch_blocks: int = 16) -> dict:
 
 
 @app.local_entrypoint()
-def main(steps: int = 30, gpu: str = "T4", include_l4: bool = True) -> None:
-    specs = [
-        {"steps": steps, "precision": "fp32", "arm": "aswp", "label": f"{gpu}-fp32-aswp",
-         "gpu": gpu},
-        {"steps": steps, "precision": "fp32", "arm": "baseline",
-         "label": f"{gpu}-fp32-baseline", "gpu": gpu},
-        {"steps": steps, "precision": "bf16", "arm": "aswp", "label": f"{gpu}-bf16-aswp",
-         "gpu": gpu},
-    ]
-    if include_l4 and gpu != "L4":
-        specs.append({"steps": steps, "precision": "fp32", "arm": "aswp",
-                      "label": "L4-fp32-aswp", "gpu": "L4"})
+def main(steps: int = 30, gpu: str = "T4", include_l4: bool = True, profiles: str = "") -> None:
+    """`profiles` selects segments explicitly as "GPU:precision[:arm]" comma-separated.
+
+    The default set measures the decided configuration; the selector exists because the
+    questions change as answers arrive (e.g. "is bf16 on a tensor-core GPU cheaper per token
+    than fp32 on L4?"), and editing the entrypoint for each one invites a typo in the thing
+    being measured.
+    """
+    if profiles:
+        specs = []
+        for spec in [p for p in profiles.split(",") if p.strip()]:
+            parts = spec.strip().split(":")
+            seg_gpu, precision = parts[0], parts[1]
+            arm = parts[2] if len(parts) > 2 else "aswp"
+            specs.append({"steps": steps, "precision": precision, "arm": arm,
+                          "label": f"{seg_gpu}-{precision}-{arm}", "gpu": seg_gpu})
+    else:
+        specs = [
+            {"steps": steps, "precision": "fp32", "arm": "aswp", "label": f"{gpu}-fp32-aswp",
+             "gpu": gpu},
+            {"steps": steps, "precision": "fp32", "arm": "baseline",
+             "label": f"{gpu}-fp32-baseline", "gpu": gpu},
+            {"steps": steps, "precision": "bf16", "arm": "aswp", "label": f"{gpu}-bf16-aswp",
+             "gpu": gpu},
+        ]
+        if include_l4 and gpu != "L4":
+            specs.append({"steps": steps, "precision": "fp32", "arm": "aswp",
+                          "label": "L4-fp32-aswp", "gpu": "L4"})
     print(f"launching {len(specs)} segments in parallel: {[s['label'] for s in specs]}\n",
           flush=True)
 
@@ -311,10 +327,29 @@ def main(steps: int = 30, gpu: str = "T4", include_l4: bool = True) -> None:
 
     out = (HOST_REPO / "bench" / "results" / "phase0_cost.json") if HOST_REPO else Path("/root/phase0_cost.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"segments": results, "endpoint_eval": ev,
-                               "decisions": decisions, "failures": failures,
-                               "usable_budget": USABLE_BUDGET,
-                               "rule": "n=8 if cost<=0.8036/run; n=6 if <=0.94; "
-                                       "n=6 consuming reserve if <=1.0227; else owner decides"},
-                              indent=2, sort_keys=True) + "\n")
+    # Merged by label, not overwritten: comparing precision and GPU options means running the
+    # segment more than once, and a file that only holds the latest run cannot be compared to
+    # anything. Newest measurement wins for a given label.
+    previous: dict = {}
+    if out.exists():
+        try:
+            previous = json.loads(out.read_text())
+        except json.JSONDecodeError:
+            previous = {}
+    by_label = {s["label"]: s for s in previous.get("segments", [])}
+    for r in results:
+        by_label[r["label"]] = r
+    by_decision = {(d["device"], d["precision"], d["arm"]): d
+                   for d in previous.get("decisions", [])}
+    for d in decisions:
+        by_decision[(d["device"], d["precision"], d["arm"])] = d
+    out.write_text(json.dumps({
+        "segments": [by_label[k] for k in sorted(by_label)],
+        "decisions": [by_decision[k] for k in sorted(by_decision)],
+        "endpoint_eval": ev,
+        "failures": failures,
+        "usable_budget": USABLE_BUDGET,
+        "rule": "n=8 if cost<=0.8036/run; n=6 if <=0.94; "
+                "n=6 consuming reserve if <=1.0227; else owner decides",
+    }, indent=2, sort_keys=True) + "\n")
     print(f"\nwrote {out}")
