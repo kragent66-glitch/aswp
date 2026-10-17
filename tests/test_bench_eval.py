@@ -28,11 +28,12 @@ from reference_eval import aggregate, block_lengths, score_mask  # noqa: E402
 from _strict import STRICT, import_torch_or_skip, require  # noqa: E402
 
 
-def frozen_pair() -> tuple[dict, Path]:
-    """The frozen stream sidecar and array, or a skip/failure if unavailable."""
+def frozen_pair(role: str = "reference-eval") -> tuple[dict, Path]:
+    """The frozen stream sidecar and array for a role, or a skip/failure if unavailable."""
     frozen = Path(__file__).resolve().parents[1] / "bench" / "frozen"
-    metas = sorted(frozen.glob("tinystories-valid-*.json"))
-    require(bool(metas), "no frozen stream sidecar in this checkout")
+    metas = [m for m in sorted(frozen.glob("*.json"))
+             if json.loads(m.read_text()).get("role") == role]
+    require(bool(metas), f"no frozen stream sidecar for role {role} in this checkout")
     meta = json.loads(metas[0].read_text())
     npy = frozen / f"{meta['stream_id']}.npy"
     require(npy.exists(), "frozen array not present (it is gitignored; run bench/freeze_stream.py)")
@@ -230,3 +231,28 @@ def test_frozen_metadata_pins_the_protocol_choices():
     assert len(meta["dataset_revision"]) == 40, "a revision must be a full commit sha"
     assert meta["tokenizer_vocab_size"] == 50257
     assert meta["tokenizer"] == "gpt2"
+
+
+def test_both_streams_are_frozen_and_the_confirmatory_one_is_pristine():
+    """Two roles, one frozen each: the shared reference stream and the pristine endpoint.
+
+    The distinction is the whole reason the pristine stream exists (docs/06 item 5), so it
+    is asserted rather than left to the sidecars: a copy-paste that gave the confirmatory
+    endpoint the shared file, or the shared role the pristine flag, would silently change
+    which data the primary claim rests on.
+    """
+    ref_meta, ref_npy = frozen_pair("reference-eval")
+    primary_meta, primary_npy = frozen_pair("confirmatory-primary")
+
+    assert ref_meta["file"] == "TinyStories-valid.txt" and ref_meta["pristine"] is False
+    assert primary_meta["file"] == "TinyStoriesV2-GPT4-valid.txt"
+    assert primary_meta["pristine"] is True
+    assert ref_meta["stream_id"] != primary_meta["stream_id"]
+    assert ref_npy != primary_npy
+    for meta in (ref_meta, primary_meta):
+        assert meta["role"] in {"reference-eval", "confirmatory-primary"}
+        assert meta["rationale"], "each stream must record why it exists"
+        assert meta["tokenizer"] == "gpt2"
+
+    # the two streams are different text, so their hashes must differ
+    assert ref_meta["raw_sha256"] != primary_meta["raw_sha256"]

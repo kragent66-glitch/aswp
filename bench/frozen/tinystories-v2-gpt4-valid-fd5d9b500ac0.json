@@ -1,0 +1,21 @@
+{
+  "bytes_per_token": 4.067234459266746,
+  "dataset_repo": "roneneldan/TinyStories",
+  "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+  "distinct_token_ids": 11517,
+  "dtype": "uint16",
+  "file": "TinyStoriesV2-GPT4-valid.txt",
+  "n_tokens": 5532654,
+  "note": "Validation stream for every NLL this repository reports. Scoring convention lives in bench/reference_eval.py.",
+  "pristine": true,
+  "rationale": "Pristine endpoint: no model in the comparison trained on it or selected against it, which is what the reference-eval stream cannot promise. Primary endpoint for the confirmatory test (docs/06 item 5).",
+  "raw_bytes": 22502601,
+  "raw_sha256": "6874bae9a4c1a4e7edcf0e53b86c17817e9cf881fc75ff2368da457b80c0585d",
+  "role": "confirmatory-primary",
+  "stream_id": "tinystories-v2-gpt4-valid-fd5d9b500ac0",
+  "token_stream_sha256": "fd5d9b500ac09dfa757a1edfc1d02d4b4e6512048f7e6f44d0eb7b0f085a9aee",
+  "token_stream_sha256_scope": "sha256 of the token array's raw bytes (ids.tobytes()), NOT of the .npy file: a .npy carries a header, so file and array hashes can never match. Verify with bench/verify_stream.py or the test suite.",
+  "tokenizer": "gpt2",
+  "tokenizer_equivalent_to": "EleutherAI/gpt-neo-125M",
+  "tokenizer_vocab_size": 50257
+}
