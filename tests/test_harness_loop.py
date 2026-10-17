@@ -433,6 +433,99 @@ def test_bf16_forward_and_backward_survive_the_attention_path():
     assert all(p.dtype == torch.bfloat16 for p in model.parameters())
 
 
+def test_resume_refuses_a_different_batch_shape_with_the_same_step_count(tmp_path):
+    """The trap `run_id` cannot catch, and the one the OOM decision walked straight toward.
+
+    80 x accum 4 and 40 x accum 8 realize the identical token count and therefore the identical
+    step count, so they share a run id -- but the gradient is averaged over a different number
+    of microbatches, so they are different experiments. Resuming across them would continue one
+    run's state under another run's identity and report it as the requested run.
+    """
+    from harness.config import trajectory_mismatches
+
+    a = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
+    # 2 x accum 1 and 1 x accum 2: identical tokens/step and identical step count.
+    b = tiny_cfg(baseline_arm(), tmp_path / "b", steps=2,
+                 budget=BudgetConfig(target_tokens=128 * 2, batch_sequences=1, grad_accum=2,
+                                     ctx=CTX))
+    assert a.budget.batch_sequences != b.budget.batch_sequences
+    assert a.run_id == b.run_id, "run_id is expected to be blind to the microbatch shape"
+    assert a.total_steps == b.total_steps
+    assert a.tokens_per_step == b.tokens_per_step
+
+    problems = trajectory_mismatches(a.to_dict(), b)
+    assert any("batch_sequences" in p for p in problems), problems
+    assert any("grad_accum" in p for p in problems), problems
+
+
+def test_resume_refuses_a_different_precision(tmp_path):
+    """bf16 and fp32 share a run id and differ in every gradient."""
+    from harness.config import trajectory_mismatches
+
+    a = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
+    b = tiny_cfg(baseline_arm(), tmp_path / "b", steps=2)
+    b = RunConfig(**{**b.__dict__, "precision": "bf16"})
+    assert a.run_id == b.run_id
+    assert any("precision" in p for p in trajectory_mismatches(a.to_dict(), b))
+
+
+def test_resume_refuses_a_checkpoint_from_a_different_arm(tmp_path):
+    """End to end: the refusal happens before any state is loaded."""
+    import torch
+
+    from harness.loop import read_checkpoint
+
+    ids = train_ids(2048)
+    a = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
+    train(a, device="cpu", train_ids=ids, log_every=10, checkpoint_every=1)
+    ckpt_path = sorted(p for p in (tmp_path / "a" / a.run_id / "checkpoint").glob("step_*.pt"))[0]
+
+    b = tiny_cfg(annealed_arm(0.03), tmp_path / "b", steps=2)
+    fresh_model = TinyDecoder(b.model)
+    before = {k: v.clone() for k, v in fresh_model.state_dict().items()}
+    with pytest.raises(ValueError, match="refusing to resume"):
+        train(b, device="cpu", train_ids=ids, resume_from=ckpt_path, log_every=10)
+    # the refusal fired before loading, so the model it would have resumed into is untouched
+    for k, v in fresh_model.state_dict().items():
+        assert torch.equal(v, before[k]), k
+    assert read_checkpoint(ckpt_path)["step"] == 1
+
+
+def test_resume_refuses_a_different_token_stream(tmp_path):
+    """A same-shaped stream with different contents: the sampler's block count agrees."""
+    from harness.loop import resume_mismatches
+
+    cfg = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
+    ckpt = {"config": cfg.to_dict(),
+            "data_manifest_hashes": {"stream_id": "tinystories-train-aaaa",
+                                     "token_stream_sha256": "a" * 64}}
+    problems = resume_mismatches(ckpt, cfg, {"stream_id": "tinystories-train-bbbb",
+                                             "token_stream_sha256": "b" * 64})
+    assert any("stream_id" in p for p in problems)
+    assert any("token_stream_sha256" in p for p in problems)
+    # and an identical stream is not a problem
+    assert resume_mismatches(ckpt, cfg, dict(ckpt["data_manifest_hashes"])) == []
+
+
+def test_a_resumed_run_records_the_fingerprint_it_resumed_as(tmp_path):
+    """The ledger must say which trajectory the resumed segment belongs to."""
+    from harness.config import trajectory_fingerprint
+
+    ids = train_ids(2048)
+    cfg = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
+    train(cfg, device="cpu", train_ids=ids, log_every=10, checkpoint_every=1,
+          stop_after=1)
+    ckpt = tmp_path / "a" / cfg.run_id / "checkpoint" / "interrupt.pt"
+    train(cfg, device="cpu", train_ids=ids, resume_from=ckpt, log_every=10)
+
+    events = [json.loads(line) for line in
+              (tmp_path / "a" / cfg.run_id / "metrics.jsonl").read_text().splitlines()]
+    resume_events = [e for e in events if e.get("event") == "resumed"]
+    assert len(resume_events) == 1
+    assert resume_events[0]["from_step"] == 1
+    assert resume_events[0]["trajectory_fingerprint"] == trajectory_fingerprint(cfg.to_dict())
+
+
 def test_the_ledger_records_what_a_budget_decision_needs(tmp_path):
     """Throughput and memory per step are the numbers that decide n=6 vs n=8."""
     cfg = tiny_cfg(baseline_arm(), tmp_path / "a")

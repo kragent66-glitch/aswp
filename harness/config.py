@@ -22,6 +22,7 @@ Locked values and where they come from:
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import math
 import subprocess
@@ -241,6 +242,48 @@ def constructor_kwargs(cls, payload: dict) -> dict:
         if get_origin(hints.get(name)) is tuple and isinstance(value, list):
             value = tuple(value)
         out[name] = value
+    return out
+
+
+#: The fields that define a *trajectory*. Two runs whose values agree here differ only in how
+#: they are executed (where output goes, how often they log). Two runs whose values differ
+#: anywhere here are different experiments, and a checkpoint from one must never be resumed as
+#: the other.
+TRAJECTORY_FIELDS = ("stage", "paired_seed", "arm", "model", "budget", "optimizer",
+                     "evaluation", "precision", "loss_chunk_tokens")
+
+
+def trajectory_fingerprint(payload: dict) -> str:
+    """A single hash over the trajectory-defining fields, recorded for cheap comparison."""
+    subset = {k: payload.get(k) for k in TRAJECTORY_FIELDS}
+    blob = json.dumps(subset, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def trajectory_mismatches(recorded: dict, cfg: RunConfig) -> list[str]:
+    """Per-field differences between a checkpoint's recorded config and the requested one.
+
+    Field-level rather than a bare hash: when a resume is refused, the message has to say
+    *what* differs, or the only recourse anyone has is to delete the checkpoint and start over.
+
+    `run_id` is deliberately not sufficient for this. It identifies stage, arm, sigma, seed and
+    model width/depth -- so an 80x4 batch and a 40x8 batch (both 1526 steps, both 163,840
+    tokens/step) share a run id, as do bf16 and fp32, and any two optimizers. Resuming across
+    that silently continues one experiment's state under another one's identity.
+    """
+    current = cfg.to_dict()
+    out: list[str] = []
+    for key in TRAJECTORY_FIELDS:
+        a, b = recorded.get(key), current.get(key)
+        if a == b:
+            continue
+        if isinstance(a, dict) and isinstance(b, dict):
+            for sub in sorted(set(a) | set(b)):
+                if a.get(sub) != b.get(sub):
+                    out.append(f"{key}.{sub}: checkpoint={a.get(sub)!r} "
+                               f"requested={b.get(sub)!r}")
+        else:
+            out.append(f"{key}: checkpoint={a!r} requested={b!r}")
     return out
 
 

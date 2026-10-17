@@ -193,7 +193,7 @@ def cost_segment(steps: int, precision: str, arm: str, label: str) -> dict:
         "instability_events": summary.get("instability_events"),
         "steps_completed": summary.get("steps_completed"),
         "git_commit": git_commit(),
-        "gpu_rate_usd_per_hour": GPU_RATES.get(torch.cuda.get_device_name(0).split()[0], None),
+        "gpu_rate_usd_per_hour": GPU_RATES.get(gpu_key(device_name, label) or "", None),
     }
 
 

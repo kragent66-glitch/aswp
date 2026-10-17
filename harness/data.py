@@ -379,7 +379,14 @@ class BlockSampler:
                             order=self._order.tolist())
 
     def load_state_dict(self, state: SamplerState | dict) -> None:
-        """Resume the exact order: same epoch, same position, same permutation."""
+        """Resume the exact order: same epoch, same position, same permutation.
+
+        Everything is validated *before* anything is assigned. The earlier version assigned the
+        epoch, position and generator and only then checked the permutation, so a bad state left
+        the sampler half-updated while the caller saw an exception -- and a same-length but
+        malformed order loaded happily, repeating some blocks and omitting others, which is a
+        resume that appears to work while silently changing which data the run sees.
+        """
         if isinstance(state, dict):
             state = SamplerState(**state)
         if int(state.n_blocks) != self.n_blocks:
@@ -387,12 +394,27 @@ class BlockSampler:
                 f"sampler state was taken over {state.n_blocks} blocks but this stream has "
                 f"{self.n_blocks}; the stream or ctx changed, so the order cannot be resumed"
             )
-        self.epoch = int(state.epoch)
-        self.position = int(state.position)
-        self.generator.bit_generator.state = state.generator_state
-        self._order = np.asarray(state.order, dtype=np.int64)
-        if self._order.size != self.n_blocks:
+        order = np.asarray(state.order, dtype=np.int64)
+        if order.size != self.n_blocks:
             raise ValueError("stored permutation does not cover every block")
+        if self.n_blocks:
+            if int(order.min()) < 0 or int(order.max()) >= self.n_blocks:
+                raise ValueError(
+                    f"stored permutation contains an out-of-range block index "
+                    f"[{int(order.min())}, {int(order.max())}] for {self.n_blocks} blocks"
+                )
+            if np.unique(order).size != self.n_blocks:
+                raise ValueError("stored permutation repeats or omits blocks")
+        # `position == n_blocks` is legitimate: the epoch is exhausted and the next draw rolls
+        # over. Anything outside that range is not a state this sampler can produce.
+        position = int(state.position)
+        if not 0 <= position <= self.n_blocks:
+            raise ValueError(f"stored position {position} is outside 0..{self.n_blocks}")
+
+        self.epoch = int(state.epoch)
+        self.position = position
+        self.generator.bit_generator.state = state.generator_state
+        self._order = order
 
 
 def main(argv: list[str] | None = None) -> int:
