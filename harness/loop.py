@@ -186,13 +186,17 @@ def build(cfg: RunConfig, *, device: str, seeds: dict, train_ids=None, data_dir:
 def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=None,
           resume_from: Path | None = None, out_root: Path | None = None,
           log_every: int = 1, checkpoint_every: int | None = None,
-          on_step=None) -> dict:
+          stop_after: int | None = None, on_step=None) -> dict:
     """Run one arm to its fixed endpoint and return the summary.
 
     `train_ids` and `eval_streams` exist so the loop can be exercised on tiny synthetic data
     (the test suite does exactly that); when they are None the frozen streams are used.
-    `checkpoint_every` is what makes resume equivalence testable: save mid-run, resume, and
-    the remaining losses must match an uninterrupted run exactly.
+
+    `stop_after` interrupts the run cleanly at a step boundary, writing `interrupt.pt`. That
+    is the real resume scenario rather than a contrived one: a container gets preempted
+    mid-run and the run continues later *with the same config*. Resuming with a different
+    `total_steps` is refused, because the annealing schedule is defined over the run length
+    -- a run planned for 2 steps cannot be extended to 4 and still be the same trajectory.
     """
     import torch
 
@@ -222,6 +226,13 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
     if resume_from is not None:
         ckpt = load_checkpoint(resume_from, model=model, optimizer=optimizer,
                               controller=controller, sampler=sampler)
+        ckpt_steps = ckpt.get("config", {}).get("budget", {}).get("total_steps")
+        if ckpt_steps is not None and int(ckpt_steps) != cfg.total_steps:
+            raise ValueError(
+                f"cannot resume a run planned for {ckpt_steps} steps with a config of "
+                f"{cfg.total_steps} steps: the annealing schedule is defined over the run "
+                f"length, so the trajectory would not be the same run"
+            )
         start_step = int(ckpt["step"])
         ledger.write({"event": "resumed", "from_step": start_step, "checkpoint": str(resume_from)})
 
@@ -240,11 +251,13 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
 
     t0 = time.time()
     tokens_seen = start_step * cfg.tokens_per_step
+    instability_events = 0
     for step in range(start_step + 1, cfg.total_steps + 1):
         step_t0 = time.time()
         sigma = controller.start_step(step)
         optimizer.zero_grad(set_to_none=True)
         micro_losses = []
+        non_finite = False
         for _ in range(cfg.budget.grad_accum):
             batch = torch.from_numpy(sampler.next_batch(cfg.budget.batch_sequences)).to(device)
             logits = model(batch)
@@ -252,11 +265,26 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
                 logits[:, :-1, :].reshape(-1, logits.shape[-1]),
                 batch[:, 1:].reshape(-1),
             )
+            loss_value = float(loss.detach())
+            if not math.isfinite(loss_value):
+                # A NaN/Inf update would poison every weight, so this step's update is
+                # skipped -- but the event is recorded and counted, never silently dropped:
+                # the protocol's rule is that an unstable run is retained and flagged, not
+                # quietly excluded from the paired comparison.
+                non_finite = True
+                break
             (loss / cfg.budget.grad_accum).backward()
-            micro_losses.append(float(loss.detach()))
-        grad_norm = float(torch.nn.utils.clip_grad_norm_(
-            model.parameters(), cfg.optimizer.max_grad_norm))
-        optimizer.step()
+            micro_losses.append(loss_value)
+        if non_finite:
+            instability_events += 1
+            optimizer.zero_grad(set_to_none=True)
+            grad_norm = float("nan")
+            optimizer_step_taken = False
+        else:
+            grad_norm = float(torch.nn.utils.clip_grad_norm_(
+                model.parameters(), cfg.optimizer.max_grad_norm))
+            optimizer.step()
+            optimizer_step_taken = True
         ratios = controller.finish_step()
         tokens_seen += cfg.tokens_per_step
         step_time = time.time() - step_t0
@@ -265,23 +293,27 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
             "step": step,
             "tokens_seen": tokens_seen,
             "sigma": sigma,
-            "train_loss": sum(micro_losses) / len(micro_losses),
+            "train_loss": (sum(micro_losses) / len(micro_losses)) if micro_losses else None,
             "lr": optimizer.param_groups[0]["lr"],
             "grad_norm": grad_norm,
+            "optimizer_step_taken": optimizer_step_taken,
             "step_seconds": step_time,
             "tokens_per_second": cfg.tokens_per_step / step_time,
             "epoch": sampler.epoch,
             "realized_perturbation": ratios.get(sorted(ratios)[0]) if ratios else 0.0,
         }
+        if non_finite:
+            record["event"] = "non_finite_loss"
         if device.startswith("cuda"):
             record["peak_gpu_memory_bytes"] = torch.cuda.max_memory_allocated()
         ledger.write(record)
         if on_step is not None:
             on_step(record)
         if step % log_every == 0 or step == cfg.total_steps:
-            log(f"step {step}/{cfg.total_steps} loss={record['train_loss']:.4f} "
+            log(f"step {step}/{cfg.total_steps} loss={record['train_loss']} "
                 f"sigma={sigma:.6f} grad_norm={grad_norm:.3f} "
-                f"{record['tokens_per_second']/1000:.1f}k tok/s")
+                f"{record['tokens_per_second']/1000:.1f}k tok/s"
+                + (" [NON-FINITE: update skipped]" if non_finite else ""))
         if cfg.evaluation.eval_every_steps and step % cfg.evaluation.eval_every_steps == 0:
             pref_ids, pref_meta = streams[cfg.evaluation.primary_role]
             res = evaluate(model, pref_ids[: cfg.evaluation.interim_eval_tokens],
@@ -295,6 +327,23 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
             save_checkpoint(run_dir / "checkpoint" / f"step_{step}.pt", model=model,
                             optimizer=optimizer, controller=controller, sampler=sampler,
                             cfg=cfg, step=step, data_manifest=data_manifest)
+        if stop_after is not None and step >= stop_after:
+            save_checkpoint(run_dir / "checkpoint" / "interrupt.pt", model=model,
+                            optimizer=optimizer, controller=controller, sampler=sampler,
+                            cfg=cfg, step=step, data_manifest=data_manifest)
+            log(f"interrupted at step {step} (stop_after={stop_after}); "
+                f"resume with the same config from checkpoint/interrupt.pt")
+            summary = {
+                "run_id": cfg.run_id, "stage": cfg.stage, "arm": cfg.arm.to_dict(),
+                "interrupted": True, "steps_completed": step,
+                "steps": cfg.total_steps, "tokens_seen": tokens_seen,
+                "instability_events": instability_events,
+                "config": cfg.to_dict(),
+                "git_commit": git_commit(), "device": device, "precision": cfg.precision,
+            }
+            (run_dir / "summary.json").write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n")
+            return summary
 
     # ------------------------------------------------------------------ endpoint eval
     endpoint = {}
@@ -324,6 +373,7 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
         "param_counts": model.param_counts() if hasattr(model, "param_counts") else None,
         "perturbation": controller.report().__dict__,
         "variance_match": variance_match_report(cfg.arm.sigma, cfg.total_steps),
+        "instability_events": instability_events,
         "config": cfg.to_dict(),
         "data_manifest": {k: data_manifest.get(k) for k in
                           ("stream_id", "raw_sha256", "token_stream_sha256", "n_tokens")},

@@ -284,6 +284,81 @@ def test_resume_continues_the_identical_trajectory(tmp_path):
         )
 
 
+def test_interrupt_then_resume_matches_an_uninterrupted_run(tmp_path):
+    """The preemption case: same config, interrupted at a step boundary, resumed later.
+
+    This is the scenario the first version of this check got wrong -- it resumed with a
+    *different* step budget, which is not the same run at all (see the next test).
+    """
+    ids = train_ids()
+    cfg = tiny_cfg(annealed_arm(0.03), tmp_path / "a", steps=4)
+
+    full_dir = tmp_path / "full"
+    train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=full_dir, log_every=4)
+    ref = dict(losses_from(full_dir / cfg.run_id / "metrics.jsonl"))
+
+    split_dir = tmp_path / "split"
+    partial = train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+                    out_root=split_dir, stop_after=2, log_every=4)
+    assert partial["interrupted"] is True
+    assert partial["steps_completed"] == 2
+    ckpt = split_dir / cfg.run_id / "checkpoint" / "interrupt.pt"
+    assert ckpt.exists()
+
+    train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=split_dir, resume_from=ckpt, log_every=4)
+    got = dict(losses_from(split_dir / cfg.run_id / "metrics.jsonl"))
+
+    assert set(got) == {1, 2, 3, 4}
+    for step in (1, 2, 3, 4):
+        assert got[step] == ref[step], f"step {step}: {got[step]} != {ref[step]}"
+
+
+def test_resuming_with_a_different_step_budget_is_refused(tmp_path):
+    """The schedule is defined over the run length, so a changed budget is not the same run."""
+    ids = train_ids()
+    cfg4 = tiny_cfg(annealed_arm(0.03), tmp_path / "a", steps=4)
+    train(cfg4, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=tmp_path / "four", stop_after=2, log_every=9)
+    ckpt = tmp_path / "four" / cfg4.run_id / "checkpoint" / "interrupt.pt"
+
+    cfg6 = tiny_cfg(annealed_arm(0.03), tmp_path / "b", steps=6)
+    with pytest.raises(ValueError, match="annealing schedule is defined over the run length"):
+        train(cfg6, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+              out_root=tmp_path / "six", resume_from=ckpt, log_every=9)
+
+
+def test_a_non_finite_loss_is_flagged_rather_than_silently_dropped(tmp_path):
+    """Item 9: the run is retained and marked, and the poisoned update is skipped."""
+    from harness.model import TinyDecoder as _Tiny
+
+    cfg = tiny_cfg(annealed_arm(0.03), tmp_path / "a", steps=3)
+    ids = train_ids(2048)
+    original = _Tiny.forward
+    calls = {"n": 0}
+
+    def poisoned(self, tokens):                     # noqa: ANN001
+        calls["n"] += 1
+        out = original(self, tokens)
+        return out * float("nan") if calls["n"] == 2 else out
+
+    _Tiny.forward = poisoned
+    try:
+        summary = train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+                        out_root=tmp_path / "a", log_every=9)
+    finally:
+        _Tiny.forward = original
+
+    rows = Ledger(tmp_path / "a" / cfg.run_id).read()
+    flagged = [r for r in rows if r.get("event") == "non_finite_loss"]
+    skipped = [r for r in rows if r.get("optimizer_step_taken") is False]
+    assert len(flagged) == 1 and len(skipped) == 1
+    assert summary["instability_events"] == 1
+    assert summary["steps"] == 3, "the run must complete and be retained, not dropped"
+    assert summary["endpoint"]["confirmatory-primary"]["nll_nats_per_token"] > 0
+
+
 def test_the_ledger_records_what_a_budget_decision_needs(tmp_path):
     """Throughput and memory per step are the numbers that decide n=6 vs n=8."""
     cfg = tiny_cfg(baseline_arm(), tmp_path / "a")
