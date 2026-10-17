@@ -1,0 +1,229 @@
+{
+  "aswp_overhead_pct": -3.0097395766810697,
+  "decisions": [
+    {
+      "arm": "aswp",
+      "cost_per_run_incl_endpoint_eval_usd": 0.6600806212555922,
+      "cost_per_run_usd": 0.6060247879222589,
+      "decision_training_only": {
+        "band": "fits with the reserve intact",
+        "design_cost": 16.96869406182325,
+        "n": 8,
+        "runs": 28
+      },
+      "decision_with_eval": {
+        "band": "fits with the reserve intact",
+        "design_cost": 18.48225739515658,
+        "n": 8,
+        "runs": 28
+      },
+      "device": "NVIDIA A10G",
+      "gpu_key": "A10",
+      "label": "A10-bf16-aswp",
+      "precision": "bf16",
+      "tokens_per_second": 126059.11941824912
+    },
+    {
+      "arm": "aswp",
+      "cost_per_run_incl_endpoint_eval_usd": 0.668660460357666,
+      "cost_per_run_usd": 0.6293471270243327,
+      "decision_training_only": {
+        "band": "fits with the reserve intact",
+        "design_cost": 17.621719556681317,
+        "n": 8,
+        "runs": 28
+      },
+      "decision_with_eval": {
+        "band": "fits with the reserve intact",
+        "design_cost": 18.72249289001465,
+        "n": 8,
+        "runs": 28
+      },
+      "device": "NVIDIA L4",
+      "gpu_key": "L4",
+      "label": "L4-bf16-aswp",
+      "precision": "bf16",
+      "tokens_per_second": 88281.90685026566
+    },
+    {
+      "arm": "aswp",
+      "cost_per_run_incl_endpoint_eval_usd": 1.48320513838874,
+      "cost_per_run_usd": 1.4438918050554066,
+      "decision_training_only": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 31.765619711218946,
+        "n": null,
+        "runs": 22
+      },
+      "decision_with_eval": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 32.63051304455228,
+        "n": null,
+        "runs": 22
+      },
+      "device": "NVIDIA L4",
+      "gpu_key": "L4",
+      "label": "L4-fp32-aswp",
+      "precision": "fp32",
+      "tokens_per_second": 38479.31281964194
+    },
+    {
+      "arm": "baseline",
+      "cost_per_run_incl_endpoint_eval_usd": 1.5280110631398802,
+      "cost_per_run_usd": 1.488697729806547,
+      "decision_training_only": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 32.751350055744034,
+        "n": null,
+        "runs": 22
+      },
+      "decision_with_eval": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 33.61624338907737,
+        "n": null,
+        "runs": 22
+      },
+      "device": "NVIDIA L4",
+      "gpu_key": "L4",
+      "label": "L4-fp32-baseline",
+      "precision": "fp32",
+      "tokens_per_second": 37321.18571287426
+    },
+    {
+      "arm": "aswp",
+      "cost_per_run_incl_endpoint_eval_usd": 2.623708434300175,
+      "cost_per_run_usd": 2.5947148509668416,
+      "decision_training_only": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 57.083726721270516,
+        "n": null,
+        "runs": 22
+      },
+      "decision_with_eval": {
+        "band": "does not fit -- protocol owner decides",
+        "design_cost": 57.72158555460385,
+        "n": null,
+        "runs": 22
+      },
+      "device": "Tesla T4",
+      "gpu_key": "T4",
+      "label": "T4-bf16-aswp",
+      "precision": "bf16",
+      "tokens_per_second": 15791.898582809401
+    }
+  ],
+  "endpoint_eval": {
+    "confirmatory-primary": {
+      "n_tokens_in_stream": 5532654,
+      "n_tokens_scored": 5521848,
+      "nll_nats_per_token": 10.899329560523148,
+      "seconds": 95.17,
+      "stream_id": "tinystories-v2-gpt4-valid-fd5d9b500ac0",
+      "tokens_per_second": 58023.35970688313
+    },
+    "reference-eval": {
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 10.898360024374691,
+      "seconds": 81.74,
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "tokens_per_second": 57685.39260240116
+    },
+    "total_seconds": 176.91
+  },
+  "failures": [],
+  "rule": "n=8 if cost<=0.8036/run; n=6 if <=0.94; n=6 consuming reserve if <=1.0227; else owner decides",
+  "segments": [
+    {
+      "arm": "aswp",
+      "device": "NVIDIA A10G",
+      "git_commit": null,
+      "gpu_rate_usd_per_hour": null,
+      "instability_events": 0,
+      "label": "A10-bf16-aswp",
+      "peak_gpu_memory_bytes": 7707890176,
+      "perturbation_dtype": "torch.bfloat16",
+      "precision": "bf16",
+      "realized_perturbation_ratio": 1.0059173632777807,
+      "seconds_per_step": 1.2997076352437338,
+      "steps": 30,
+      "steps_completed": 30,
+      "tokens": 4915200,
+      "tokens_per_second": 126059.11941824912,
+      "wall_seconds": 38.99
+    },
+    {
+      "arm": "aswp",
+      "device": "NVIDIA L4",
+      "git_commit": null,
+      "gpu_rate_usd_per_hour": null,
+      "instability_events": 0,
+      "label": "L4-bf16-aswp",
+      "peak_gpu_memory_bytes": 7707890176,
+      "perturbation_dtype": "torch.bfloat16",
+      "precision": "bf16",
+      "realized_perturbation_ratio": 1.0059173632777807,
+      "seconds_per_step": 1.855872917175293,
+      "steps": 30,
+      "steps_completed": 30,
+      "tokens": 4915200,
+      "tokens_per_second": 88281.90685026566,
+      "wall_seconds": 55.68
+    },
+    {
+      "arm": "aswp",
+      "device": "NVIDIA L4",
+      "git_commit": null,
+      "gpu_rate_usd_per_hour": null,
+      "instability_events": 0,
+      "label": "L4-fp32-aswp",
+      "peak_gpu_memory_bytes": 14235418624,
+      "perturbation_dtype": "torch.float32",
+      "precision": "fp32",
+      "realized_perturbation_ratio": 1.0043085328695465,
+      "seconds_per_step": 4.257872295379639,
+      "steps": 30,
+      "steps_completed": 30,
+      "tokens": 4915200,
+      "tokens_per_second": 38479.31281964194,
+      "wall_seconds": 127.74
+    },
+    {
+      "arm": "baseline",
+      "device": "NVIDIA L4",
+      "git_commit": null,
+      "gpu_rate_usd_per_hour": null,
+      "instability_events": 0,
+      "label": "L4-fp32-baseline",
+      "peak_gpu_memory_bytes": 14184038400,
+      "perturbation_dtype": "torch.float32",
+      "precision": "fp32",
+      "realized_perturbation_ratio": 1.0043085328695465,
+      "seconds_per_step": 4.389999858538309,
+      "steps": 30,
+      "steps_completed": 30,
+      "tokens": 4915200,
+      "tokens_per_second": 37321.18571287426,
+      "wall_seconds": 131.7
+    },
+    {
+      "arm": "aswp",
+      "device": "Tesla T4",
+      "git_commit": null,
+      "gpu_rate_usd_per_hour": null,
+      "instability_events": 0,
+      "label": "T4-bf16-aswp",
+      "peak_gpu_memory_bytes": 13367702016,
+      "perturbation_dtype": "torch.bfloat16",
+      "precision": "bf16",
+      "realized_perturbation_ratio": 1.0040483210664857,
+      "seconds_per_step": 10.374939982096354,
+      "steps": 30,
+      "steps_completed": 30,
+      "tokens": 4915200,
+      "tokens_per_second": 15791.898582809401,
+      "wall_seconds": 311.25
+    }
+  ],
+  "usable_budget": 22.5
+}

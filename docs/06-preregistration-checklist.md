@@ -7,10 +7,9 @@ edits. This document is the operational form of that rule: it lists what is froz
 what is open, and — for each open item — whether it is blocked on a **decision**
 (protocol owner) or on **work** (the harness, Phase 0, Phase 1).
 
-**Status: decision items 1–6 and 9 are resolved and committed; the harness exists and the
-Phase 0 gate passes on CPU for the screen model. Two things remain before Phase 2: the GPU
-half of Phase 0 (mixed precision at scale + the item-10 cost measurement), and the protocol
-release tag (item 8).**
+**Status: decision items 1–6 and 9 are resolved and committed; Phase 0 is complete on both
+CPU and GPU, and its cost measurement fixed n = 8. One item remains before Phase 2: the
+protocol release tag (item 8).**
 
 ---
 
@@ -50,6 +49,7 @@ release tag (item 8).**
 | 4a. Batch configuration | **80 sequences × accum 4**, ctx 512 | Keeps the reference micro-batch (which governs per-step gradient statistics and memory) while multiplying perturbation events |
 | 4b. Dropout | **0.0** in the primary arms | Dropout is comparator C5b, not a default |
 | 4c. Model scale | Screen at **d256/L8 = 6.43M non-embedding** (0.94× the reference "8M" row); verification planned at d512/L8 = 25.70M non-embedding (0.98× "28M") | Scale-matching uses the published non-embedding convention |
+| 4d. Training precision | **bf16** on a tensor-core GPU (A10G primary, L4 fallback). Noise and perturbation still constructed in fp32, and the realized perturbation is measured *after* the cast, as the SAP requires — verified at scale on hardware: ratio 1.0059 at σ = 0.03 | measured, item 10 |
 
 ### Resolved work (items 5–6)
 
@@ -81,13 +81,32 @@ release tag (item 8).**
    sidecars because all three are written by one shared helper. Re-freezing both
    validation streams reproduced their stream ids and token-stream hashes exactly,
    which is the check that the schema change did not disturb the data.
-10. **Phase 0, GPU half.** The nine correctness checks pass on CPU for the screen
-    model. Still to measure on GPU at the real batch shape: bf16 behaviour at scale,
-    peak memory, and the item-10 cost segment. **This is what fixes n**: the design
-    of record is 22 runs (4-run screen + n = 6 × 3 arms), which fits the $22.50
-    usable budget only above ~50k tokens/s on a T4. Predeclared rule: ≤ $0.82/run →
-    n = 8 × 3 arms; $0.82–0.94 → n = 6; > $0.94 → the design does not fit the
-    reserve and the protocol owner decides.
+10. **Phase 0, GPU half — DONE.** Nine correctness checks pass on CPU; the GPU half is
+    measured and it decided n.
+
+    | segment | GPU | precision | tokens/s | $/run | incl. endpoint eval | n |
+    |---|---|---|---|---|---|---|
+    | A10-bf16 | A10G | bf16 | 126 059 | 0.6060 | **0.6601** | **8** |
+    | L4-bf16 | L4 | bf16 | 88 282 | 0.6293 | 0.6687 | 8 |
+    | L4-fp32 | L4 | fp32 | 38 479 | 1.4439 | 1.4832 | — |
+    | L4-fp32 baseline | L4 | fp32 | 37 321 | 1.4887 | 1.5280 | — |
+    | T4-bf16 | T4 | bf16 | 15 792 | 2.5947 | 2.6237 | — |
+
+    **Decision: n = 8 (28 runs = $18.48–18.72 of the $22.50 usable, reserve intact).** Both
+    bf16 tensor-core profiles clear the rule's strictest band; fp32 and the T4 do not. A10G is
+    chosen: cheapest per run *and* 1.43× faster than L4 in wall-clock.
+
+    Measured along the way, and part of what makes the number trustworthy:
+    - **ASWP overhead is not measurable above noise** (−3.0%, 4.258 s vs 4.390 s per step on
+      one 30-step segment per arm). The intervention is negligible for the budget; the *sign*
+      is noise and is not being claimed as a speedup.
+    - **The decided batch shape (80 × 512) cannot run in fp32** on a 16 GB card: 40 960 ×
+      50 257 vocab = 8.2 GB for the logits alone, plus an equal gradient buffer. The loss is
+      therefore chunked over the vocabulary projection (equivalence pinned by test), and the
+      endpoint evaluation costs 176.9 s per run on the full streams.
+    - **The endpoint NLL is read from bf16 weights** while the six reference rows are fp32.
+      That is a real caveat for the *comparability* row in docs/07 (absolute NLL), and
+      irrelevant to the confirmatory contrast, where both arms share the precision.
 
 ## 3. Order of operations
 
@@ -95,7 +114,7 @@ release tag (item 8).**
 harness written  →  Phase 0 gate passes  [DONE on CPU: 9/9 for d256/L8]
                  →  decision items 1–4 locked, items 5–6 hashed and committed  [DONE]
                  →  tokenizer artifacts hashed (item 9)  [DONE]
-                 →  GPU half of Phase 0 + cost segment (item 10)  →  n fixed
+                 →  GPU half of Phase 0 + cost segment (item 10)  →  n fixed  [DONE: n = 8]
                  →  protocol release tagged (item 8)
                  →  Phase 1 screen (C0 + C1–C3)  →  item 7 locked from its result
                  →  Phase 2 confirmation (paired seeds from config/manifest.json)

@@ -233,6 +233,49 @@ def endpoint_eval_cost(batch_blocks: int = 16) -> dict:
     return out
 
 
+def gpu_key(device_name: str, label: str = "") -> str | None:
+    """Map a torch device name onto the Modal rate table.
+
+    `torch.cuda.get_device_name()` returns things like "NVIDIA L4", "NVIDIA A10G" and
+    "Tesla T4", so taking the first token gives "NVIDIA" or "Tesla" and silently drops every
+    segment out of the decision table -- which is exactly what happened, leaving the table
+    empty after a run that had produced all the numbers it needed.
+    """
+    aliases = {"T4": "T4", "A10": "A10", "A10G": "A10", "L4": "L4",
+               "A100": "A100", "H100": "H100"}
+    for token in device_name.replace("-", " ").replace(",", " ").split():
+        if token in aliases:
+            return aliases[token]
+    if label:
+        head = label.split("-")[0]
+        if head in GPU_RATES:
+            return head
+    return None
+
+
+def derive_decisions(segments: list[dict], endpoint_seconds: float) -> list[dict]:
+    """The rate table, cost per run and n decision for each measured segment."""
+    decisions = []
+    for r in segments:
+        rate = GPU_RATES.get(gpu_key(r.get("device", ""), r.get("label", "")) or "")
+        if rate is None:
+            continue
+        c = cost_per_run(r["tokens_per_second"], rate)
+        eval_hours = endpoint_seconds / 3600.0
+        with_eval = c + eval_hours * rate
+        decisions.append({
+            "label": r.get("label"), "device": r.get("device"), "gpu_key":
+            gpu_key(r.get("device", ""), r.get("label", "")),
+            "precision": r["precision"], "arm": r["arm"],
+            "tokens_per_second": r["tokens_per_second"],
+            "cost_per_run_usd": c,
+            "cost_per_run_incl_endpoint_eval_usd": with_eval,
+            "decision_training_only": decide_n(c),
+            "decision_with_eval": decide_n(with_eval),
+        })
+    return decisions
+
+
 @app.local_entrypoint()
 def main(steps: int = 30, gpu: str = "T4", include_l4: bool = True, profiles: str = "") -> None:
     """`profiles` selects segments explicitly as "GPU:precision[:arm]" comma-separated.
@@ -299,24 +342,13 @@ def main(steps: int = 30, gpu: str = "T4", include_l4: bool = True, profiles: st
     print(f"  total {ev['total_seconds']:.2f}s per run")
 
     print("\n=== the decision this was run for ===")
-    decisions = []
-    for r in results:
-        rate = GPU_RATES.get(r["device"].split()[0])
-        if rate is None:
-            continue
-        c = cost_per_run(r["tokens_per_second"], rate)
-        d = decide_n(c)
-        eval_hours = ev["total_seconds"] / 3600.0
-        with_eval = c + eval_hours * rate
-        d2 = decide_n(with_eval)
-        decisions.append({"device": r["device"], "precision": r["precision"], "arm": r["arm"],
-                          "tokens_per_second": r["tokens_per_second"],
-                          "cost_per_run_usd": c,
-                          "cost_per_run_incl_endpoint_eval_usd": with_eval,
-                          "decision_training_only": d, "decision_with_eval": d2})
-        print(f"  {r['device']:12s} {r['precision']:4s} {r['arm']:8s} "
-              f"${c:.4f}/run -> n={d['n']} ({d['band']}); incl. endpoint eval "
-              f"${with_eval:.4f} -> n={d2['n']}")
+    decisions = derive_decisions(results, ev["total_seconds"])
+    for d in decisions:
+        print(f"  {d['label']:22s} {d['gpu_key']:5s} {d['precision']:4s} {d['arm']:8s} "
+              f"${d['cost_per_run_usd']:.4f}/run -> n={d['decision_training_only']['n']} "
+              f"({d['decision_training_only']['band']}); incl. endpoint eval "
+              f"${d['cost_per_run_incl_endpoint_eval_usd']:.4f} -> "
+              f"n={d['decision_with_eval']['n']}")
     baseline = next((r for r in results if r["arm"] == "baseline"), None)
     aswp = next((r for r in results if r["arm"] == "aswp" and r["device"] == baseline["device"]
                  and r["precision"] == baseline["precision"]), None) if baseline else None
