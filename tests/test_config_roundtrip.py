@@ -5,8 +5,11 @@ to a GPU container, and rebuilt there. If the rebuild does not produce an *ident
 the run that executes is not the run that was described -- and the failure mode is a
 `TypeError`, or worse, a silently different `run_id` and a run directory nobody looks at.
 
-These tests are torch-free so they run in the fast analysis CI job rather than only where a
-GPU-sized dependency set is installed.
+This file needs torch, because `harness/config.py` imports `ModelConfig` from `harness.model`
+and that module imports torch. It is not a GPU test -- it exercises pure dataclass logic -- but
+it must declare the dependency rather than pretend not to have it: the first version of this
+file imported `harness.config` at module scope, which failed *collection* in the numpy-only CI
+job instead of skipping.
 """
 from __future__ import annotations
 
@@ -17,6 +20,11 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _strict import import_torch_or_skip  # noqa: E402
+
+import_torch_or_skip()
 
 from harness.arms import annealed_arm, baseline_arm, constant_matched_arm  # noqa: E402
 from harness.config import (  # noqa: E402
