@@ -27,7 +27,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .arms import variance_match_report
-from .config import REPO_ROOT, RunConfig, git_commit
+from .config import (REPO_ROOT, RunConfig, git_commit, trajectory_fingerprint,
+                     trajectory_mismatches)
 from .data import BlockSampler, load_tokens
 from .model import TinyDecoder
 from .perturbation import AnnealedLinear, AnnealedPerturbation
@@ -195,17 +196,54 @@ def save_checkpoint(path: Path, *, model, optimizer, controller, sampler, cfg: R
     return path
 
 
-def load_checkpoint(path: Path, *, model, optimizer, controller, sampler) -> dict:
+def read_checkpoint(path: Path) -> dict:
+    """Read a checkpoint's contents *without applying any of its state*.
+
+    Kept separate so a resume can verify that the checkpoint describes the same experiment
+    before anything is loaded into the model: a refusal must not leave a half-loaded model or
+    an optimizer holding another run's moments.
+    """
     import torch
 
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    return torch.load(path, map_location="cpu", weights_only=False)
+
+
+def apply_checkpoint_state(ckpt: dict, *, model, optimizer, controller, sampler) -> None:
+    import torch
+
     model.load_state_dict(denormalize_state_dict(ckpt["model"], model))
     optimizer.load_state_dict(ckpt["optimizer"])
     sampler.load_state_dict(ckpt["sampler"])
     controller.load_state_dict(ckpt["perturbation"])
     if "torch_rng_state" in ckpt:
         torch.set_rng_state(ckpt["torch_rng_state"].cpu())
+
+
+def load_checkpoint(path: Path, *, model, optimizer, controller, sampler) -> dict:
+    ckpt = read_checkpoint(path)
+    apply_checkpoint_state(ckpt, model=model, optimizer=optimizer, controller=controller,
+                           sampler=sampler)
     return ckpt
+
+
+def resume_mismatches(ckpt: dict, cfg: RunConfig, data_manifest: dict) -> list[str]:
+    """Everything that must match for a resume to continue the *same* run.
+
+    The step budget is the case that motivated this (the annealing schedule is defined over the
+    run length), but it is only one of them: a checkpoint carries the whole config and the data
+    hashes, so all of it is checked rather than the one field that happened to cause a visible
+    failure first.
+    """
+    problems = trajectory_mismatches(ckpt.get("config") or {}, cfg)
+    recorded = ckpt.get("data_manifest_hashes") or {}
+    for key in ("stream_id", "token_stream_sha256"):
+        want, got = data_manifest.get(key), recorded.get(key)
+        if got and want and got != want:
+            problems.append(f"data.{key}: checkpoint={got!r} requested={want!r}")
+    if any(p.startswith("budget.total_steps") for p in problems):
+        problems.append("the annealing schedule is defined over the run length, so a run of a "
+                        "different length is not the same trajectory")
+    return problems
 
 
 def build(cfg: RunConfig, *, device: str, seeds: dict, train_ids=None, data_dir: Path | None = None):
@@ -285,17 +323,19 @@ def train(cfg: RunConfig, *, device: str = "cpu", train_ids=None, eval_streams=N
 
     start_step = 0
     if resume_from is not None:
-        ckpt = load_checkpoint(resume_from, model=model, optimizer=optimizer,
-                              controller=controller, sampler=sampler)
-        ckpt_steps = ckpt.get("config", {}).get("budget", {}).get("total_steps")
-        if ckpt_steps is not None and int(ckpt_steps) != cfg.total_steps:
+        ckpt = read_checkpoint(resume_from)
+        # Identity before state: a mismatch must not leave a half-loaded model behind.
+        problems = resume_mismatches(ckpt, cfg, data_manifest)
+        if problems:
             raise ValueError(
-                f"cannot resume a run planned for {ckpt_steps} steps with a config of "
-                f"{cfg.total_steps} steps: the annealing schedule is defined over the run "
-                f"length, so the trajectory would not be the same run"
+                "refusing to resume: this checkpoint is not the same experiment as the "
+                "requested config -- " + "; ".join(problems)
             )
+        apply_checkpoint_state(ckpt, model=model, optimizer=optimizer,
+                               controller=controller, sampler=sampler)
         start_step = int(ckpt["step"])
-        ledger.write({"event": "resumed", "from_step": start_step, "checkpoint": str(resume_from)})
+        ledger.write({"event": "resumed", "from_step": start_step, "checkpoint": str(resume_from),
+                      "trajectory_fingerprint": trajectory_fingerprint(cfg.to_dict())})
 
     log_path = run_dir / "train.log"
 

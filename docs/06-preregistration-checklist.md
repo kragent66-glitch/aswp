@@ -8,8 +8,15 @@ what is open, and — for each open item — whether it is blocked on a **decisi
 (protocol owner) or on **work** (the harness, Phase 0, Phase 1).
 
 **Status: decision items 1–6 and 9 are resolved and committed; Phase 0 is complete on both
-CPU and GPU, and its cost measurement fixed n = 8. One item remains before Phase 2: the
-protocol release tag (item 8).**
+CPU and GPU, and its cost measurement fixed n = 8. The release tag is published
+(`v0.1.0-preregistration`). Open before Phase 2: an external signature on the tag, a successor
+tag matching the commit the confirmatory runs execute, and the σ0 the screen must choose. An
+external review (Codex, 2026-10-17) is recorded in §5 with each finding's resolution.**
+
+Note: the SAP (`docs/03`) carried `<value>` placeholders in its Locked Configuration Fields
+until this point. That was an auditability failure in its own right — a normative document that
+does not state the values cannot pre-register anything — and the review caught it. Every field
+is now filled except σ0, which is the screen's output.
 
 ---
 
@@ -73,8 +80,13 @@ protocol release tag (item 8).**
 
 **Remaining process and measurement steps:**
 
-8. **Signatures, commit hash, and archive tag** — the open-science plan asks for a
-   pre-results protocol release tag before confirmed experimentation begins.
+8. **Signatures, commit hash, and archive tag** — the release tag is **published**:
+   `v0.1.0-preregistration`, with notes stating what it freezes and, explicitly, what it does
+   *not* contain (σ0, any result). **Still open: an external signature/timestamp**, which needs
+   the protocol owner — the tag commits the code, but only a signed timestamp proves *when* the
+   protocol was fixed. Also open: the tag predates the runner commits, so a successor tag must
+   be cut from the commit the confirmatory runs actually execute. The external review flagged
+   this and it is a real gap: the tag must name the executed code, not the near-miss.
 9. ~~Pin the tokenizer artifacts by hash.~~ **Done.** The tokenizer is pinned by
    artifact hash at revision `607a30d783dfa663caf39e06633721c8d4cfcd7e`, and the
    provenance block is identical across the training manifest and both endpoint
@@ -115,7 +127,8 @@ harness written  →  Phase 0 gate passes  [DONE on CPU: 9/9 for d256/L8]
                  →  decision items 1–4 locked, items 5–6 hashed and committed  [DONE]
                  →  tokenizer artifacts hashed (item 9)  [DONE]
                  →  GPU half of Phase 0 + cost segment (item 10)  →  n fixed  [DONE: n = 8]
-                 →  protocol release tagged (item 8)
+                 →  protocol release tagged (item 8)  [DONE: v0.1.0-preregistration; successor
+                                                     tag to name the executed commit]
                  →  Phase 1 screen (C0 + C1–C3)  →  item 7 locked from its result
                  →  Phase 2 confirmation (paired seeds from config/manifest.json)
 ```
@@ -148,5 +161,52 @@ python analysis/p23_match_curse.py    # variance matching, winner's curse, margi
 python analysis/p4_delta_criteria.py  # decision-rule fire rates, type-I error, δ under units
 
 python harness/data.py --out-dir data          # build the training stream (deterministic)
-python -m harness.phase0 --model screen_d256_l8 # the ten implementation checks
+python -m harness.phase0 --model screen_d256_l8 # the nine implementation checks
+python -m harness.phase0 --model screen_d256_l8 --include-cost  # + the cost measurement
 ```
+
+---
+
+## 5. External review — findings and resolutions
+
+An independent adversarial review (Codex CLI, `gpt-6-luna`, whole repository at `91bff96`)
+asked to prioritise anything that could make a reported number wrong or a claim unsupported.
+Its verdict was **"not fit to produce the confirmatory result as it stands"**, and it was
+right. Its positive findings are worth as much as its criticisms, since they are things it
+actively tried to break.
+
+**Findings, and what happened to each:**
+
+1. **Resume identity — major, fixed.** Resume checked only `total_steps`, so a checkpoint from
+   a *different* configuration with the same step count was accepted, and the resumed run was
+   then reported under the newly-supplied config's identity. `run_id` cannot cover this: it
+   identifies stage, arm, sigma, seed and model width/depth only — so 80 × accum 4 and
+   40 × accum 8 (both 1526 steps, both 163,840 tokens/step) share a run id, as do bf16 and
+   fp32. Now `trajectory_mismatches()` compares every trajectory-defining field individually
+   plus the recorded data hashes, and identity is verified **before** any state is loaded so a
+   refusal cannot leave a half-loaded model. Five tests, including that exact batch-shape trap.
+2. **Tag vs HEAD, and unfilled SAP fields — major, fixed.** The tag pointed at a commit that
+   predates the runner, and `docs/03` still had `<value>` placeholders in its Locked
+   Configuration Fields — a normative document that does not state its values pre-registers
+   nothing. Every SAP field is now filled with the real hashes and settings; **σ0 alone stays
+   open**, because it is the screen's output and cannot be known in advance without peeking.
+   A successor tag will name the commit the confirmatory runs actually execute.
+3. **Sampler checkpoint validation — minor, fixed.** The permutation's *length* was checked but
+   not that it is a permutation, and state was assigned before validating. A same-length order
+   that repeated blocks while omitting others loaded happily — a resume that appears to work
+   while seeing different data. Now index range, uniqueness and position are validated first,
+   then assigned; two tests, one specific to the half-apply case.
+4. **"Ten checks" wording — minor, fixed.** `harness/phase0.py` implements nine correctness
+   checks; the cost measurement is opt-in via `--include-cost`.
+
+**Attacked and found sound** (each of these was explicitly probed): the two-stage
+`chunked_lm_loss` gradient hand-off; the cosine schedule hitting exactly σ = 0; eligible-module
+selection excluding embeddings, head, norms and biases; pairing by construction with a dedicated
+perturbation generator that does not consume the global RNG stream; √(3/8) as the continuous
+variance-matching factor; and the r = √(1 + q² − 2qρ) conversion with its worst corner.
+
+**Not fixed, stated rather than hidden:** the marker-aligned tokenization equivalence holds as
+evidence *recorded in the manifest* (exact marker invariant, the chunking rule, and the token
+and raw hashes) rather than as a test a reader can re-run — the raw 1.9 GB text was deleted
+after hashing to recover disk. The reproduction is available to anyone from the pinned Hub
+revision; what cannot be re-run from this repository alone is the whole-file comparison itself.
