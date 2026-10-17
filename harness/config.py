@@ -21,9 +21,11 @@ Locked values and where they come from:
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import subprocess
+from typing import get_origin, get_type_hints
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -214,6 +216,32 @@ class RunConfig:
         if self.precision not in {"fp32", "bf16"}:
             problems.append(f"unknown precision {self.precision!r}")
         return problems
+
+
+def constructor_kwargs(cls, payload: dict) -> dict:
+    """Filter a serialized config down to the fields `cls`'s constructor accepts.
+
+    The `to_dict()` methods deliberately carry *derived* values alongside the inputs --
+    `tokens_per_step`, `realized_tokens`, the realized-vs-target percentage -- because those
+    belong in a run's record. They are not constructor arguments, so feeding such a payload
+    straight back into the dataclass raises `TypeError: unexpected keyword argument`, which is
+    exactly what a remote runner does when it rebuilds a config from the job description it
+    was handed.
+
+    Sequence-typed fields are coerced back to their declared type because JSON has no tuples:
+    `betas` round-trips as a list, and `OptimizerConfig(betas=[0.9, 0.95])` is *not equal* to
+    the original. A rebuilt config that compares unequal to the one that was described is a
+    silent way to run something other than what was specified.
+    """
+    allowed = {f.name for f in dataclasses.fields(cls)}
+    hints = get_type_hints(cls)
+    out: dict = {}
+    for name in allowed & set(payload):
+        value = payload[name]
+        if get_origin(hints.get(name)) is tuple and isinstance(value, list):
+            value = tuple(value)
+        out[name] = value
+    return out
 
 
 def git_commit(repo_root: Path = REPO_ROOT) -> str | None:
