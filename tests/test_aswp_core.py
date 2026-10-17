@@ -283,44 +283,68 @@ class TestDecisionRule:
         mismatched = rule_two_sided_ci(d, signs, delta=0.5)
         assert np.all(~mismatched["fires"] | consistent["fires"])
 
-    def test_rule_fires_only_when_every_clause_holds(self):
-        """Each clause must be load-bearing, and the rule is their conjunction.
+    # Deterministic fixtures at n = 6 (64 sign patterns) whose exact p-values are
+    # hand-computable, so no assertion below depends on a random draw happening to
+    # behave as the comment says. The earlier version of this test asserted
+    # ``fires.sum() <= 50`` on a 50-row *random* sample -- true for any rule,
+    # including one that always fires, and dependent on the draw.
+    WIDE_AND_WEAK = np.array([[10.0, -1.0, 10.0, -1.0, 10.0, -1.0]])
+    TINY_AND_TIGHT = np.full((4, 6), 0.01)
+    STRONG_AND_TIGHT = np.full((4, 6), 4.0)
 
-        The previous version of this test asserted ``fires.sum() <= 50`` on a
-        50-row sample -- true whatever the rule did, so it asserted nothing. It
-        is replaced by clause-level checks that each fail if the corresponding
-        clause is dropped or inverted.
+    def test_large_estimate_with_insufficient_evidence_does_not_fire(self):
+        """A big point estimate that the test cannot support yields no verdict.
+
+        [10, -1, 10, -1, 10, -1] has mean 4.5, far above delta = 2.0, but its
+        exact one-sided p-value is 8/64 = 0.125 > 0.05: only the eight patterns
+        that flip the three -1 entries reach the observed sum of 27, because
+        flipping any +10 to -10 loses 20 that no subset of +/-1 can recover.
         """
         signs = sign_matrix(6)
-        rng = make_rng(24)
-        noisy = rng.normal(3.0, 8.0, size=(50, 6))   # large point estimate, wild spread
-        weak = np.full((50, 6), 0.01)                # tiny effect, perfect consistency
-        strong = rng.normal(3.0, 1.0, size=(50, 6))  # large and consistent
+        d = self.WIDE_AND_WEAK
+        p = exact_p_batched(d, signs, "one")
+        r = rule_consistent(d, signs, delta=2.0)
+        assert d.mean(axis=1)[0] == pytest.approx(4.5)      # clears delta by 2.5
+        assert float(p[0]) == pytest.approx(8 / 64)         # not significant
+        assert bool(r["point_over_delta"][0])               # clause it satisfies
+        assert not bool(r["test_rejects"][0])               # clause it fails
+        assert not bool(r["fires"][0])                      # therefore no verdict
 
-        # The rule IS the conjunction of its three clauses, row by row.
-        for d, delta in ((noisy, 2.0), (weak, 1.0), (strong, 1.0)):
+    def test_significant_effect_below_delta_does_not_fire(self):
+        """Significance alone is not enough: the estimate must clear delta.
+
+        [0.01]x6 has p = 1/64 = 0.0156 <= 0.05 on every row -- the test clause is
+        satisfied -- but the point estimate is 0.01 against delta = 1.0, so the
+        practical-threshold clause withholds the verdict.
+        """
+        signs = sign_matrix(6)
+        d = self.TINY_AND_TIGHT
+        p = exact_p_batched(d, signs, "one")
+        r = rule_consistent(d, signs, delta=1.0)
+        assert np.allclose(p, 1 / 64)
+        assert r["test_rejects"].all()
+        assert r["interval_excludes_zero"].all()
+        assert not r["point_over_delta"].any()
+        assert not r["fires"].any()
+
+    def test_rule_fires_when_every_clause_holds(self):
+        """Positive control: without it, a rule that never fires would pass."""
+        signs = sign_matrix(6)
+        d = self.STRONG_AND_TIGHT
+        p = exact_p_batched(d, signs, "one")
+        r = rule_consistent(d, signs, delta=2.0)
+        assert np.allclose(p, 1 / 64)                        # only all-plus reaches it
+        assert r["point_over_delta"].all()                   # 4.0 > 2.0
+        assert r["fires"].all()
+
+    def test_rule_is_the_conjunction_of_its_clauses(self):
+        signs = sign_matrix(6)
+        for d, delta in ((self.WIDE_AND_WEAK, 2.0),
+                         (self.TINY_AND_TIGHT, 1.0),
+                         (self.STRONG_AND_TIGHT, 2.0)):
             r = rule_consistent(d, signs, delta=delta)
             expected = r["test_rejects"] & r["interval_excludes_zero"] & r["point_over_delta"]
             assert np.array_equal(r["fires"], expected)
-
-        # Clause 2 (practical threshold) is load-bearing: the weak case clears the
-        # significance clause on every row and still never fires, because the
-        # point estimate never exceeds delta.
-        weak_r = rule_consistent(weak, signs, delta=1.0)
-        assert weak_r["test_rejects"].all()
-        assert not weak_r["point_over_delta"].any()
-        assert not weak_r["fires"].any()
-
-        # Clause 1 (significance) is load-bearing: the noisy case produces rows
-        # whose point estimate clears delta, and the rule withholds the verdict on
-        # strictly more rows than that, because significance is not established.
-        noisy_r = rule_consistent(noisy, signs, delta=2.0)
-        assert noisy_r["point_over_delta"].sum() > 0
-        assert noisy_r["fires"].sum() < noisy_r["point_over_delta"].sum()
-
-        # Positive control: without it, a rule that never fires would pass the
-        # two checks above.
-        assert rule_consistent(strong, signs, delta=1.0)["fires"].any()
 
     @pytest.mark.parametrize("n", [6, 8])
     def test_type_one_error_is_bounded_by_alpha(self, n):

@@ -96,7 +96,7 @@ The analysis is not blocked by any of the above — it runs today:
 
 ```bash
 python -m pip install numpy scipy pytest
-python -m pytest                      # 64 tests, including the seed-manifest checks
+python -m pytest                      # 67 tests, including the seed-manifest checks
 python analysis/seed_manifest.py      # verify the frozen seeds against their derivation
 python analysis/p1_exact_power.py     # resolution, power, δ unit conversion
 python analysis/p23_match_curse.py    # variance matching, winner's curse, margin rule

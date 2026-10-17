@@ -436,4 +436,4 @@ decisions or on the harness — enumerated with owners in
 - `analysis/p4_delta_criteria.py` — decision-rule fire rates with the exact test,
   type-I error, power at the preregistered δ under the unit conversion
 - `analysis/seed_manifest.py` — frozen paired/per-role seed derivation and verification (issue #10)
-- `tests/test_aswp_core.py`, `tests/test_seed_manifest.py` — 64 tests pinning all of the above
+- `tests/test_aswp_core.py`, `tests/test_seed_manifest.py` — 67 tests pinning all of the above

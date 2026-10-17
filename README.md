@@ -67,7 +67,7 @@ How to run what exists:
 
 ```bash
 python -m pip install numpy scipy pytest
-python -m pytest                      # 64 tests
+python -m pytest                      # 67 tests
 python analysis/p1_exact_power.py     # resolution + power, units conversion
 python analysis/p23_match_curse.py    # variance matching, winner's curse, margin rule
 python analysis/p4_delta_criteria.py  # decision-rule fire rates, type-I error, δ under units

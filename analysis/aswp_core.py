@@ -18,16 +18,21 @@ SIGMA_DELTA (``sd_delta``)
     the power simulation operate in, because the test is a function of the ``d_i``.
 
     The two are different units, and conflating them is the error tracked as
-    issue #13.  With equal arm variances and correlation ``rho`` between paired
-    arms, Bienayme's identity gives
+    issue #13.  Bienayme's identity over paired arms gives
 
-        Var(d) = Var(B) + Var(T) - 2 Cov(B, T) = 2 * sigma^2 * (1 - rho)
+        Var(d) = Var(B) + Var(T) - 2 Cov(B, T)
 
-    so the ratio ``r = sd_delta / sd_baseline = sqrt(2 (1 - rho))`` lies in
-    [0, sqrt(2)].  A threshold written as ``1.0 * sd_baseline`` is therefore an
-    effect of ``1.0 / r`` in ``sd_delta`` units -- 1.0 when rho = 0.5, but only
-    0.707 when rho = 0.  ``rho`` is not knowable before the treatment runs, so the
-    design declares a worst case (``RHO_WORST_CASE``) rather than assuming 0.5.
+    Writing ``q = sd_treatment / sd_baseline`` for the arm ratio and ``rho`` for
+    their correlation, that becomes
+
+        r = sd_delta / sd_baseline = sqrt(1 + q^2 - 2 q rho)
+
+    of which ``sqrt(2 (1 - rho))`` is the equal-variance case (q = 1).  A threshold
+    written as ``1.0 * sd_baseline`` is an effect of ``1.0 / r`` in ``sd_delta``
+    units -- 1.0 when rho = 0.5 with q = 1, but only 0.625 at the predeclared worst
+    corner (q = 1.25, rho = 0).  Neither rho nor q is knowable before the treatment
+    runs, so the design declares a tolerance box (``Q_TOLERANCE_MAX``,
+    ``RHO_WORST_CASE``) rather than assuming the convenient values.
 """
 from __future__ import annotations
 

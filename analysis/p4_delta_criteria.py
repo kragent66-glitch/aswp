@@ -20,7 +20,12 @@ assumptions     : (a) d_i iid N(mu, sigma_delta) within an arm;
                   (b) exchangeability of sign flips under H0 (the primary test's
                   own assumption, so the test is exact under it);
                   (c) sigma_delta == 1 (all effects are reported in sigma_delta
-                  units) and arm SDs equal, so r = sqrt(2(1-rho)) (issue #13)
+                  units), and the unit conversion carries the arm ratio q =
+                  sigma_treatment/sigma_baseline explicitly:
+                  r = sqrt(1 + q^2 - 2*q*rho), which is sqrt(2(1-rho)) only at
+                  q = 1. Equal arm SDs is an assumption about the outcome, not an
+                  identity, so the design predeclares the tolerance box
+                  q <= 1.25, rho >= 0 (issue #13)
 memory budget   : 256 MiB statistic block (issue #16)
 
 Issue #14, made explicit: the primary test is one-sided at alpha=0.05, so the
@@ -55,7 +60,10 @@ print("=" * 78)
 print("P4 config (reproducibility)")
 print("=" * 78)
 print(f"  seed = {SEED_DELTA}, trials per cell = {TRIALS:,}, alpha = {ALPHA}")
-print(f"  rho grid = {RHO_GRID}, r = sqrt(2(1-rho))")
+print(f"  rho grid = {RHO_GRID}, q grid = (1.0, {Q_TOLERANCE_MAX}) "
+      f"[q = sigma_treatment/sigma_baseline]")
+print(f"  unit conversion: r = sqrt(1 + q^2 - 2*q*rho); r = sqrt(2(1-rho)) only at q = 1")
+print(f"  predeclared tolerance box: q <= {Q_TOLERANCE_MAX}, rho >= 0 -> worst r = 1.6008")
 print(f"  memory budget = {MEMORY_BUDGET_BYTES / 2**20:.0f} MiB statistic block")
 print("  test = exact one-sided sign-flip; interval = one-sided 95% randomization bound")
 print("  ('CI lower > k' evaluated as the inverted test of d - k: exact, no gridding)")
