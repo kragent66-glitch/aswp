@@ -128,19 +128,38 @@ def aggregate(gathered: np.ndarray, mask: np.ndarray) -> tuple[float, int]:
 # --------------------------------------------------------------------------- #
 # I/O helpers
 # --------------------------------------------------------------------------- #
-def find_frozen_stream(frozen_dir: Path) -> tuple[Path, dict]:
-    metas = sorted(frozen_dir.glob("tinystories-valid-*.json"))
+#: The role of the stream the reference table is measured on. The repository freezes two
+#: streams -- this one (shared with the reference checkpoints) and a pristine one for the
+#: confirmatory endpoint -- so selection is by role, not by "whatever is present".
+REFERENCE_STREAM_ROLE = "reference-eval"
+
+
+def find_frozen_stream(frozen_dir: Path,
+                       role: str = REFERENCE_STREAM_ROLE) -> tuple[Path, dict]:
+    """The frozen stream for `role`, with its sidecar metadata."""
+    metas = sorted(frozen_dir.glob("*.json"))
     if not metas:
         raise SystemExit(f"no frozen stream in {frozen_dir}; run bench/freeze_stream.py first")
-    if len(metas) > 1:
+    candidates = []
+    for m in metas:
+        try:
+            meta = json.loads(m.read_text())
+        except json.JSONDecodeError:
+            continue
+        if meta.get("role") == role:
+            candidates.append((m, meta))
+    if not candidates:
+        found = [json.loads(m.read_text()).get("role") or m.name for m in metas]
+        raise SystemExit(f"no frozen stream with role {role!r} in {frozen_dir}; found {found}")
+    if len(candidates) > 1:
         raise SystemExit(
-            f"{len(metas)} frozen streams present ({[m.name for m in metas]}); "
-            "exactly one must exist -- remove the stale one deliberately, not silently"
+            f"{len(candidates)} frozen streams claim role {role!r} "
+            f"({[m.name for m, _ in candidates]}); remove the stale one deliberately"
         )
-    meta = json.loads(metas[0].read_text())
+    meta_path, meta = candidates[0]
     npy = frozen_dir / f"{meta['stream_id']}.npy"
     if not npy.exists():
-        raise SystemExit(f"metadata {metas[0]} has no matching array {npy}")
+        raise SystemExit(f"metadata {meta_path} has no matching array {npy}")
     return npy, meta
 
 

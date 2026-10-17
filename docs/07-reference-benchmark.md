@@ -154,6 +154,16 @@ Wall time per model on a T4: 89–289 s (GPU total 1 088 s).
   modelling code to add rows is a decision this repository has not taken.
 - T4 rather than the cheapest available GPU; fp32 throughout, no TF32/BF16 reduction.
   Rounding differences at the 4th decimal are possible on other hardware.
+- **The training runs are bf16, and these rows are fp32.** That is a genuine asymmetry for
+  anyone reading our model's row against these six: bf16 changes the absolute NLL by more
+  than the 4th-decimal rounding above, so a small difference between our row and a reference
+  row should not be read as an architectural or recipe effect. It does not touch the
+  confirmatory result, where both arms of a pair share the precision and the comparison is
+  within our own runs — but for this table specifically, treat our row's absolute value as
+  measured under a different precision than the six.
+  The reason for the asymmetry is not preference: the decided batch shape (80 × 512) cannot
+  run in fp32 on a 16 GB card at all (40 960 × 50 257 vocab = 8.2 GB for the logits alone),
+  and fp32 on L4 costs 2.2× per token because it uses no tensor cores (docs/06 item 10).
 
 ## 7. Reproduce
 
