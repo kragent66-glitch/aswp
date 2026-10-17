@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -25,6 +26,38 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 from reference_eval import aggregate, block_lengths, score_mask  # noqa: E402
+
+#: Set to 1 by the CI jobs that are *supposed* to exercise these tests. A skipped test
+#: still exits 0, so a job missing torch (or the frozen stream) would report success
+#: while never touching the code it exists to check; in strict mode the omission is a
+#: failure instead of a skip. Local runs without torch/dev data still skip cleanly.
+STRICT = os.environ.get("ASWP_BENCH_STRICT") == "1"
+
+
+def require(condition: bool, why: str) -> None:
+    if condition:
+        return
+    if STRICT:
+        pytest.fail(f"ASWP_BENCH_STRICT=1 but this test cannot run: {why}")
+    pytest.skip(why)
+
+
+def import_torch_or_skip():
+    if STRICT:
+        import torch  # noqa: F401  -- a missing dependency must fail the job, not skip
+        return torch
+    return pytest.importorskip("torch")
+
+
+def frozen_pair() -> tuple[dict, Path]:
+    """The frozen stream sidecar and array, or a skip/failure if unavailable."""
+    frozen = Path(__file__).resolve().parents[1] / "bench" / "frozen"
+    metas = sorted(frozen.glob("tinystories-valid-*.json"))
+    require(bool(metas), "no frozen stream sidecar in this checkout")
+    meta = json.loads(metas[0].read_text())
+    npy = frozen / f"{meta['stream_id']}.npy"
+    require(npy.exists(), "frozen array not present (it is gitignored; run bench/freeze_stream.py)")
+    return meta, npy
 
 
 # ---------------------------------------------------------------- block_lengths
@@ -151,7 +184,7 @@ def test_block_nll_scores_each_token_against_the_preceding_context():
     id and the per-token NLL would jump from ~0 to ~ln V. Requires torch, and is
     skipped (not deleted) where torch is unavailable.
     """
-    torch = pytest.importorskip("torch")
+    torch = import_torch_or_skip()
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
     from reference_eval import block_nll
 
@@ -200,14 +233,7 @@ def test_frozen_metadata_hash_matches_the_array_bytes():
     verified it. The stream id must also derive from the hash, so a changed stream
     cannot keep a frozen name.
     """
-    frozen = Path(__file__).resolve().parents[1] / "bench" / "frozen"
-    metas = sorted(frozen.glob("tinystories-valid-*.json"))
-    if not metas:
-        pytest.skip("no frozen stream sidecar in this checkout")
-    meta = json.loads(metas[0].read_text())
-    npy = frozen / f"{meta['stream_id']}.npy"
-    if not npy.exists():
-        pytest.skip("frozen array not generated in this checkout (it is gitignored)")
+    meta, npy = frozen_pair()
 
     ids = np.load(npy)
     assert ids.dtype == np.uint16, "stream dtype is part of the frozen record"
@@ -220,11 +246,7 @@ def test_frozen_metadata_hash_matches_the_array_bytes():
 
 def test_frozen_metadata_pins_the_protocol_choices():
     """The sidecar must name the dataset revision and tokenizer it was built from."""
-    frozen = Path(__file__).resolve().parents[1] / "bench" / "frozen"
-    metas = sorted(frozen.glob("tinystories-valid-*.json"))
-    if not metas:
-        pytest.skip("no frozen stream sidecar in this checkout")
-    meta = json.loads(metas[0].read_text())
+    meta, _npy = frozen_pair()
     assert meta["dataset_repo"] == "roneneldan/TinyStories"
     assert len(meta["dataset_revision"]) == 40, "a revision must be a full commit sha"
     assert meta["tokenizer_vocab_size"] == 50257
