@@ -283,15 +283,44 @@ class TestDecisionRule:
         mismatched = rule_two_sided_ci(d, signs, delta=0.5)
         assert np.all(~mismatched["fires"] | consistent["fires"])
 
-    def test_rule_requires_both_clauses(self):
-        # a huge point estimate with no significance must not fire, and a solid
-        # rejection that misses the practical threshold must not fire either
+    def test_rule_fires_only_when_every_clause_holds(self):
+        """Each clause must be load-bearing, and the rule is their conjunction.
+
+        The previous version of this test asserted ``fires.sum() <= 50`` on a
+        50-row sample -- true whatever the rule did, so it asserted nothing. It
+        is replaced by clause-level checks that each fail if the corresponding
+        clause is dropped or inverted.
+        """
         signs = sign_matrix(6)
         rng = make_rng(24)
-        noisy = rng.normal(3.0, 8.0, size=(50, 6))       # big mean, wild spread
-        weak = np.full((50, 6), 0.01)                     # tiny, consistent sign
-        assert rule_consistent(noisy, signs, delta=2.0)["fires"].sum() <= 50
-        assert rule_consistent(weak, signs, delta=1.0)["fires"].sum() == 0
+        noisy = rng.normal(3.0, 8.0, size=(50, 6))   # large point estimate, wild spread
+        weak = np.full((50, 6), 0.01)                # tiny effect, perfect consistency
+        strong = rng.normal(3.0, 1.0, size=(50, 6))  # large and consistent
+
+        # The rule IS the conjunction of its three clauses, row by row.
+        for d, delta in ((noisy, 2.0), (weak, 1.0), (strong, 1.0)):
+            r = rule_consistent(d, signs, delta=delta)
+            expected = r["test_rejects"] & r["interval_excludes_zero"] & r["point_over_delta"]
+            assert np.array_equal(r["fires"], expected)
+
+        # Clause 2 (practical threshold) is load-bearing: the weak case clears the
+        # significance clause on every row and still never fires, because the
+        # point estimate never exceeds delta.
+        weak_r = rule_consistent(weak, signs, delta=1.0)
+        assert weak_r["test_rejects"].all()
+        assert not weak_r["point_over_delta"].any()
+        assert not weak_r["fires"].any()
+
+        # Clause 1 (significance) is load-bearing: the noisy case produces rows
+        # whose point estimate clears delta, and the rule withholds the verdict on
+        # strictly more rows than that, because significance is not established.
+        noisy_r = rule_consistent(noisy, signs, delta=2.0)
+        assert noisy_r["point_over_delta"].sum() > 0
+        assert noisy_r["fires"].sum() < noisy_r["point_over_delta"].sum()
+
+        # Positive control: without it, a rule that never fires would pass the
+        # two checks above.
+        assert rule_consistent(strong, signs, delta=1.0)["fires"].any()
 
     @pytest.mark.parametrize("n", [6, 8])
     def test_type_one_error_is_bounded_by_alpha(self, n):

@@ -23,7 +23,9 @@ Eligible module list: <values>.
 Noise distribution: Gaussian; scaling: RMS-relative; schedule: cosine.
 Selected sigma0: <value>.
 Selection rule and exploratory parent run ID: <value>.
-Paired seed list: 8 integers (absolute minimum 6), generated once and frozen in the config manifest (one-sided α=0.05 needs n≥6 to be achievable; n=8 gives 80% power at a 1.0·SD_delta effect — see # Sample Size).
+Paired seed list (**frozen**, issue #10): `1857649130, 1434172854, 1387619681, 536290471, 1202662852, 1106087492, 1881574181, 1859844390` — 8 integers, the absolute minimum being 6 (one-sided α=0.05 needs n≥6 to be achievable; n=8 gives 80% power at a 1.0·SD_delta effect — see # Sample Size). Stored with the derivation rule and the per-role seeds in `config/manifest.json`; `analysis/seed_manifest.py` recomputes and the test suite verifies the file against that rule on every run, so the list cannot be silently re-chosen.
+Per-role RNG seeds: one independent stream per role — `global`, `init`, `data-loader`, `dropout`, `perturbation` — each derived per paired seed from the same rule (`sha256("ASWP/v1/<role>/<n>")`). Perturbations must be drawn from a dedicated `torch.Generator` (protocol §Reproducibility); baseline and treatment runs of a pair share the paired seed and differ only in the perturbation arm, so pairing is enforced by construction.
+Open config fields and their blockers are tracked in `docs/06-preregistration-checklist.md`; no confirmatory run may start until that document's open list is empty and committed.
 Analysis reproducibility (issue #15): all analysis randomness is seeded in `analysis/aswp_core.py` — **SEED_POWER = 42** (power/resolution), **SEED_MATCH_CURSE = 7** (selection and margin simulations), **SEED_DELTA = 20260905** (decision-rule simulation); 40,000 trials per cell, 2,000,000 screen draws, and a **256 MiB** memory budget for the exact 2ⁿ enumeration (issue #16). Each script prints its seed, trial counts, assumptions and budget, and `tests/test_aswp_core.py` asserts same-seed determinism.
 
 # Endpoint and Estimand

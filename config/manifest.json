@@ -1,0 +1,98 @@
+{
+  "schema": "aswp-config-manifest/1",
+  "namespace": "ASWP",
+  "version": "v1",
+  "frozen": true,
+  "issue": 10,
+  "derivation": {
+    "method": "sha256(parts joined by '/'), first 8 bytes big-endian, mod 2**31",
+    "parts": [
+      "ASWP",
+      "v1",
+      "<role>",
+      "<n>"
+    ],
+    "role_parts_for_paired_seeds": [
+      "paired",
+      "1..8"
+    ],
+    "property": "Fully determined by this published rule: no clock, no beacon, no draw that could be re-rolled. Recompute with analysis/seed_manifest.py."
+  },
+  "paired_seed_count": 8,
+  "paired_seeds": [
+    1857649130,
+    1434172854,
+    1387619681,
+    536290471,
+    1202662852,
+    1106087492,
+    1881574181,
+    1859844390
+  ],
+  "roles": [
+    "global",
+    "init",
+    "data-loader",
+    "dropout",
+    "perturbation"
+  ],
+  "per_seed_role_seeds": {
+    "1857649130": {
+      "global": 298601387,
+      "init": 1306340087,
+      "data-loader": 1066112006,
+      "dropout": 994252351,
+      "perturbation": 1997111755
+    },
+    "1434172854": {
+      "global": 549134421,
+      "init": 1824876201,
+      "data-loader": 175445046,
+      "dropout": 648989005,
+      "perturbation": 1507820521
+    },
+    "1387619681": {
+      "global": 42192391,
+      "init": 247595209,
+      "data-loader": 1636024662,
+      "dropout": 662689393,
+      "perturbation": 1003620918
+    },
+    "536290471": {
+      "global": 691467060,
+      "init": 967170015,
+      "data-loader": 610613771,
+      "dropout": 157488547,
+      "perturbation": 1867960096
+    },
+    "1202662852": {
+      "global": 487807015,
+      "init": 1553949001,
+      "data-loader": 1685910276,
+      "dropout": 1046852894,
+      "perturbation": 827513314
+    },
+    "1106087492": {
+      "global": 2015147313,
+      "init": 1994513232,
+      "data-loader": 673048746,
+      "dropout": 775371204,
+      "perturbation": 2059134625
+    },
+    "1881574181": {
+      "global": 2094475792,
+      "init": 956630852,
+      "data-loader": 2098794709,
+      "dropout": 663652188,
+      "perturbation": 952027972
+    },
+    "1859844390": {
+      "global": 1773791555,
+      "init": 614329118,
+      "data-loader": 711580892,
+      "dropout": 1861924290,
+      "perturbation": 2115153162
+    }
+  },
+  "notes": "One paired seed per seed-pair: baseline and treatment runs of a pair share the paired seed and differ only in the perturbation arm, so pairing is enforced by construction. Each role stream is independent; the perturbation stream must be drawn from a dedicated torch.Generator. Never regenerate this list: adding seeds later extends it by index rather than replacing it."
+}

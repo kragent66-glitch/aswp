@@ -19,6 +19,7 @@ Every value below is computed, not asserted. Scripts: `analysis/p1_exact_power.p
 | 14 | One-sided test vs two-sided CI | Interval is the **one-sided 95% randomization bound** inverted from the same one-sided test; a two-sided interval (when reported) inverts **both** tails | "interval excludes 0" ≡ "test rejects" (**exact**, not ±1%); type-I ≤ α — see §P6 |
 | 15 | p4 unseeded SciPy sampling | Seeded `numpy` Generator (`SEED_DELTA = 20260905`); seed, trials and assumptions recorded and printed | 40,000 trials/cell; reproducibility test in suite — see §P7 |
 | 16 | p1 peak ~3.3 GB | Batched enumeration to a declared memory budget, arithmetically identical output | 256 MiB statistic block; 3.4 GiB → 0.6 GiB, 130 s → 4.9 s — see §P8 |
+| 10 | Seed list not frozen | Paired + per-role seeds derived from a published rule and frozen; re-checked by the suite | 8 paired seeds in `config/manifest.json`; derivation `sha256("ASWP/v1/<role>/<n>")` — see §P9 |
 
 ---
 
@@ -376,6 +377,30 @@ by one sign pattern — which is exactly what happened while comparing the two p
 
 ---
 
+## P9. Frozen seed manifest (issue #10) — SOLVED
+
+The eight paired seeds and the per-role RNG seeds are frozen in
+`config/manifest.json`, with the derivation published rather than the numbers
+merely drawn:
+
+    seed = int.from_bytes(sha256("ASWP/v1/<role>/<n>")[:8], "big") % 2**31
+
+Deriving them means the list is fully determined by a published string — no clock,
+no beacon, no draw that could be re-rolled after seeing something — and anyone can
+recompute it: `python analysis/seed_manifest.py` verifies the committed file against
+the rule, and `tests/test_seed_manifest.py` does the same on every test run
+(including a tampered-file case, so hand-editing a seed fails the suite).
+
+Paired seeds (8): `1857649130, 1434172854, 1387619681, 536290471, 1202662852,
+1106087492, 1881574181, 1859844390`. Per-role streams: `global`, `init`,
+`data-loader`, `dropout`, `perturbation`. Writing the file is byte-idempotent, so
+regenerating it cannot change the frozen list, and the SAP carries the same values.
+
+What this does **not** resolve: the remaining SAP config fields (dataset/tokenizer/
+validation hashes, model commit, training configuration, selected σ0) are blocked on
+decisions or on the harness — enumerated with owners in
+`docs/06-preregistration-checklist.md`.
+
 ## Final lock-list — paste into SAP config block
 
 1. Hypothesis: **one-sided**, justification written in (§P1).
@@ -410,4 +435,5 @@ by one sign pattern — which is exactly what happened while comparing the two p
   winner's-curse inflation, top-two margin rule, stability-check power
 - `analysis/p4_delta_criteria.py` — decision-rule fire rates with the exact test,
   type-I error, power at the preregistered δ under the unit conversion
-- `tests/test_aswp_core.py` — 37 tests pinning all of the above
+- `analysis/seed_manifest.py` — frozen paired/per-role seed derivation and verification (issue #10)
+- `tests/test_aswp_core.py`, `tests/test_seed_manifest.py` — 64 tests pinning all of the above
