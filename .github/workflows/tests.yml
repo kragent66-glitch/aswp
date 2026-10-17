@@ -1,9 +1,18 @@
-name: analysis
+name: tests
 
-# The analysis suite is the only executable artifact in this repository, so it is
-# the only thing CI can honestly verify. It runs the tests and then the three
-# scripts, so a PR that breaks a regenerated table fails here rather than in a
-# reader's terminal.
+# Two jobs, because the repository now has two kinds of executable artifact:
+#
+#   pytest-and-scripts  the statistical analysis suite and its regenerated tables. Pure
+#                       numpy/scipy, seconds to run -- kept fast so a PR gets feedback
+#                       quickly.
+#   bench               the reference benchmark: the frozen validation stream plus the
+#                       evaluator whose scoring convention every published NLL depends
+#                       on. Needs torch, hence a separate job rather than a tax on the
+#                       fast one.
+#
+# The bench job runs with ASWP_BENCH_STRICT=1, which turns a skip into a failure. Without
+# it, a job whose torch install silently failed would report green while the shift test
+# and the frozen-stream invariants never ran -- exactly the coverage this job exists for.
 on:
   push:
     branches: [main]
@@ -32,3 +41,35 @@ jobs:
           python analysis/p4_delta_criteria.py > /tmp/p4.txt
       - name: Show the tables this run produced
         run: cat /tmp/p1.txt /tmp/p23.txt /tmp/p4.txt
+
+  bench:
+    name: bench (cpu torch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install benchmark dependencies (CPU torch, no CUDA wheel)
+        run: |
+          python -m pip install --upgrade pip numpy transformers pytest
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -c "import torch, transformers; print('torch', torch.__version__, '| transformers', transformers.__version__)"
+      - name: Freeze the validation token stream from its pinned revision
+        run: python bench/freeze_stream.py
+      - name: Verify the frozen stream against its committed record
+        run: python bench/verify_stream.py --array-only
+      - name: Test suite with skips treated as failures
+        env:
+          ASWP_BENCH_STRICT: "1"
+        run: python -m pytest -q -rs
+      - name: Confirm the torch-gated tests actually ran, not skipped
+        run: |
+          python - <<'PY'
+          import json
+          runs = json.load(open("bench/results/reference_results.json"))["runs"]
+          print(f"{len(runs)} reference rows committed, each scored on:")
+          for r in runs:
+              print(" ", r["repo"], r["n_tokens_scored"], "tokens")
+          PY

@@ -1,0 +1,9 @@
+# Benchmark dependencies: the dataset-side tooling, the evaluator, and its tests.
+#
+# torch is deliberately NOT pinned here, because the right build depends on the machine:
+#   CPU (CI, laptops):  pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   CUDA host (Modal):  the runner image pip-installs torch itself, from default PyPI
+# Listing it here would silently drag a multi-gigabyte CUDA wheel onto CPU-only jobs.
+numpy>=2.0
+transformers>=5.0
+pytest>=8.0
