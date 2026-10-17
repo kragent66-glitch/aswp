@@ -1,0 +1,6 @@
+# Benchmark dependencies. The dataset-side tooling and the evaluator need only
+# numpy (plus pytest for the suite); torch/transformers are required to load the
+# reference checkpoints and our own model.
+numpy>=2.0
+torch>=2.0
+transformers>=5.0

@@ -41,12 +41,15 @@ docs/
 ├── 03-statistical-analysis-plan.md          # SAP + preregistration (config fields to be locked)
 ├── 04-design-review.md                      # red-team review of the protocol (historical record)
 ├── 05-blocker-resolution.md                 # resolutions + regenerated values for issues #1–#16
-└── 06-preregistration-checklist.md          # what is frozen, what is open, what blocks what
+├── 06-preregistration-checklist.md          # what is frozen, what is open, what blocks what
+└── 07-reference-benchmark.md                # six public TinyStories checkpoints re-measured on our stream
 config/
 └── manifest.json                            # frozen paired seed list and per-role RNG seeds (#10)
 analysis/                                    # statistical analysis: exact sign-flip test, power,
                                              # selection/margin, δ criteria — with tests
-tests/                                       # pytest suite for the analysis core
+bench/                                       # reference benchmark: frozen validation stream, evaluator,
+                                             # convention probes, Modal GPU runner, results
+tests/                                       # pytest suite for the analysis core and the benchmark
 ```
 
 The statistical analysis is executable and tested today (see `analysis/` and `tests/`);
@@ -67,11 +70,23 @@ How to run what exists:
 
 ```bash
 python -m pip install numpy scipy pytest
-python -m pytest                      # 67 tests
+python -m pytest                      # 82 tests
 python analysis/p1_exact_power.py     # resolution + power, units conversion
 python analysis/p23_match_curse.py    # variance matching, winner's curse, margin rule
 python analysis/p4_delta_criteria.py  # decision-rule fire rates, type-I error, δ under units
 ```
+
+## Reference benchmark
+
+[`docs/07-reference-benchmark.md`](docs/07-reference-benchmark.md) re-measures six public
+TinyStories checkpoints on one frozen validation token stream, so the comparison is made
+under a protocol we control rather than quoting numbers produced by a protocol we cannot
+inspect. Two facts make that comparison meaningful: the reference family's released
+tokenizer is the full GPT-2 BPE our model would use (identical token→id maps), and the
+family cannot be evaluated beyond its trained 512-token context — its learned position
+embeddings are untouched above row 511. Both are verified in the document and enforced by
+`tests/test_bench_eval.py`. The public checkpoints are **context, not causal evidence**:
+only the paired baseline-vs-ASWP comparison measures ASWP.
 
 ## Open science
 

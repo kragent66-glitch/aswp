@@ -1,0 +1,202 @@
+{
+  "runs": [
+    {
+      "architecture": {
+        "hidden_size": 1024,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 1,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.6319446219158791,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2023-05-17T22:11:26.000Z",
+      "limit_tokens": null,
+      "model_sha": "0d983335d1447a805aa0f4c0c440e257a0a87f44",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 1.8030479065494984,
+      "params": 66155520,
+      "perplexity": 6.068114352921064,
+      "repo": "roneneldan/TinyStories-1Layer-21M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 238.8
+    },
+    {
+      "architecture": {
+        "hidden_size": 64,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 8,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.777730358000743,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2025-12-18T19:43:10.000Z",
+      "limit_tokens": null,
+      "model_sha": "77f1b168e219585646439073245fe87e56b3023e",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 2.218999964904988,
+      "params": 3745984,
+      "perplexity": 9.19812781433922,
+      "repo": "roneneldan/TinyStories-1M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 89.3
+    },
+    {
+      "architecture": {
+        "hidden_size": 512,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 8,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.4704119928826381,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2023-05-17T22:05:49.000Z",
+      "limit_tokens": null,
+      "model_sha": "52dabea9997faf578489d619249616926e54ed18",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 1.3421672241016753,
+      "params": 51987968,
+      "perplexity": 3.827329203736052,
+      "repo": "roneneldan/TinyStories-28M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 241.4
+    },
+    {
+      "architecture": {
+        "hidden_size": 768,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 4,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.4701513448041864,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2024-08-12T13:27:10.000Z",
+      "limit_tokens": null,
+      "model_sha": "2ad0a164221b7c4d21cac7c46aec74f6f98dbfc8",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 1.3414235498050675,
+      "params": 68514048,
+      "perplexity": 3.8244839754752693,
+      "repo": "roneneldan/TinyStories-33M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 288.7
+    },
+    {
+      "architecture": {
+        "hidden_size": 128,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 8,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.6307152176639281,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2023-05-17T22:11:46.000Z",
+      "limit_tokens": null,
+      "model_sha": "cfaf26ec85ecdfc1bd7c2638104cce55cb67f894",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 1.7995402024154512,
+      "params": 8278400,
+      "perplexity": 6.046866490512973,
+      "repo": "roneneldan/TinyStories-3M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 99.1
+    },
+    {
+      "architecture": {
+        "hidden_size": 256,
+        "max_position_embeddings": 2048,
+        "model_type": "gpt_neo",
+        "num_heads": 16,
+        "num_layers": 8,
+        "vocab_size": 50257,
+        "window_size": 256
+      },
+      "bits_per_byte": 0.5239652362883864,
+      "ctx": 512,
+      "dataset_revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+      "dtype": "float32",
+      "env": {
+        "device": "cuda",
+        "host": "modal",
+        "python": "3.12.10",
+        "torch": "2.14.1+cu130"
+      },
+      "last_modified": "2023-05-17T22:12:27.000Z",
+      "limit_tokens": null,
+      "model_sha": "8612e3b15c66ffa94eaa6ee0de5c96edd2d630af",
+      "n_tokens_in_stream": 4724503,
+      "n_tokens_scored": 4715275,
+      "nll_nats_per_token": 1.4949639408755762,
+      "params": 19702528,
+      "perplexity": 4.459175755975333,
+      "repo": "roneneldan/TinyStories-8M",
+      "stream_id": "tinystories-valid-aa85f8db4e23",
+      "stream_sha256": "aa85f8db4e2336b441f2b46474032bb35f4bc26967e0f6f6a94bc9042fc64154",
+      "wall_seconds": 130.5
+    }
+  ]
+}

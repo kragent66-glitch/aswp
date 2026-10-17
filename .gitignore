@@ -22,3 +22,10 @@ data/
 
 # Local scratch
 *.tmp
+
+# Benchmark artifacts: the frozen token stream is regenerated deterministically
+# by bench/freeze_stream.py and verified against the sha256 recorded in its
+# sidecar JSON, so the multi-megabyte array is not committed. Results and the
+# sidecar metadata ARE committed -- they are the record.
+bench/frozen/*.npy
+bench/.cache/
