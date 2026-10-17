@@ -7,11 +7,17 @@ venv/
 dist/
 build/
 
-# Experiments / data (never commit runs or datasets)
+# Experiments / data (never commit runs or datasets).
 runs/
 logs/
 checkpoints/
-data/
+# `data/*` rather than `data/` on purpose: an excluded directory is never descended into,
+# so a negation inside it can never match. The manifest IS the record -- it carries the
+# dataset revision, the raw and token-stream hashes and the tokenizer provenance that
+# docs/06 item 5 requires to be committed before confirmatory training. The 939 MB token
+# array it describes is not.
+data/*
+!data/train_manifest.json
 *.pt
 *.ckpt
 

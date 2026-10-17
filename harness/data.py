@@ -22,6 +22,7 @@ nowhere here, and `transformers` is imported lazily inside the builder.
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import sys
@@ -37,13 +38,58 @@ TOKENIZER_NAME = "gpt2"
 EOT_MARKER = "<|endoftext|>"
 EOT_TOKEN_ID = 50256
 STREAM_DTYPE = np.uint16
-DEFAULT_CHUNK_BYTES = 64 << 20
+#: Piece size for the builder. Kept small deliberately: a 64 MB piece yields ~16M token ids
+#: and the intermediate list of Python ints alone is >400 MB, which is enough to have this
+#: process OOM-killed inside the worker's memory cgroup. 8 MB keeps peak resident memory in
+#: the low hundreds of MB while costing nothing -- piece boundaries are marker-aligned, so
+#: the chunk size cannot change the resulting stream (asserted in the test suite).
+DEFAULT_CHUNK_BYTES = 8 << 20
 
 
 # --------------------------------------------------------------------------- building
+def tokenizer_provenance(name: str = TOKENIZER_NAME) -> dict:
+    """Hashes of the tokenizer artifacts actually on disk.
+
+    Naming the tokenizer is not the same as pinning it: the vocabulary is an input to every
+    token id in every stream, so the files themselves have to be identifiable. Recorded for
+    the same reason the dataset revision is -- so that "GPT-2 BPE" is a verifiable claim
+    rather than a description.
+    """
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(name, use_fast=True)
+    files: dict[str, str] = {}
+    candidates = []
+    for attr in ("vocab_file", "merges_file"):
+        path = getattr(tok, attr, None)
+        if path:
+            candidates.append(Path(path))
+    if candidates:
+        directory = candidates[0].parent
+        for extra in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
+                      "added_tokens.json", "vocab.json", "merges.txt"):
+            candidate = directory / extra
+            if candidate.exists():
+                candidates.append(candidate)
+    for path in sorted({p for p in candidates if p.exists()}):
+        files[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {
+        "name": name,
+        "vocab_size": int(tok.vocab_size),
+        "revision": (candidates[0].parent.name if candidates else None),
+        "files": files,
+    }
+
+
 def _encode(tokenizer, text: str) -> np.ndarray:
-    enc = tokenizer(text, add_special_tokens=False, truncation=False, padding=False)
-    return np.asarray(enc["input_ids"], dtype=STREAM_DTYPE)
+    """Tokenize one piece straight into a numpy array.
+
+    `return_tensors="np"` avoids materialising millions of Python ints before the array
+    exists, which is the difference between fitting in the cgroup and not.
+    """
+    enc = tokenizer(text, add_special_tokens=False, truncation=False, padding=False,
+                    return_tensors="np")
+    return np.asarray(enc["input_ids"], dtype=STREAM_DTYPE).reshape(-1)
 
 
 def tokenize_chunked(path: Path, tokenizer, chunk_bytes: int = DEFAULT_CHUNK_BYTES,
@@ -101,7 +147,8 @@ def iter_pieces(path: Path, chunk_bytes: int = DEFAULT_CHUNK_BYTES, marker: str 
 
 
 def build_train_stream(out_dir: Path, *, local_file: Path | None = None,
-                       chunk_bytes: int = DEFAULT_CHUNK_BYTES, verify: bool = True) -> dict:
+                       chunk_bytes: int = DEFAULT_CHUNK_BYTES, verify: bool = True,
+                       delete_raw_after: bool = False) -> dict:
     """Download/verify the training split, tokenize it, and write stream + manifest.
 
     The raw file is streamed in pieces and the tokens are appended to a `.bin`, so peak
@@ -166,6 +213,13 @@ def build_train_stream(out_dir: Path, *, local_file: Path | None = None,
             out.write(ids.tobytes())
             stream_sha.update(ids.tobytes())
             n_tokens += int(ids.size)
+            # Measured, not guessed: without this the tokenizer's per-piece objects are only
+            # reclaimed by the cycle collector, and RSS grows ~120 MB per 8 MiB piece -- which
+            # is what OOM-killed this build inside the worker's memory cgroup partway through
+            # the corpus. Explicitly dropping the piece and collecting keeps RSS flat at
+            # ~1.4 GB for the whole file.
+            del ids, piece
+            gc.collect()
             if (i + 1) % 8 == 0:
                 print(f"  {i+1} pieces, {n_tokens:,} tokens", flush=True)
 
@@ -188,12 +242,15 @@ def build_train_stream(out_dir: Path, *, local_file: Path | None = None,
         "raw_bytes": raw_bytes,
         "raw_sha256": raw_sha_hex,
         "tokenizer": TOKENIZER_NAME,
-        "tokenizer_vocab_size": int(tokenizer.vocab_size),
+        "tokenizer_vocab_size": tokenizer.vocab_size,
+        "tokenizer_provenance": tokenizer_provenance(),
         "n_tokens": n_tokens,
         "bytes_per_token": raw_bytes / n_tokens if n_tokens else None,
         "distinct_token_ids": int((counts > 0).sum()),
         "dtype": np.dtype(STREAM_DTYPE).name,
         "bin_file": bin_path.name,
+        "chunk_bytes": chunk_bytes,
+        "raw_file_retained": not delete_raw_after,
         "token_stream_sha256": stream_sha.hexdigest(),
         "eot_marker": EOT_MARKER,
         "eot_token_id": EOT_TOKEN_ID,
@@ -213,6 +270,11 @@ def build_train_stream(out_dir: Path, *, local_file: Path | None = None,
     # canonical.
     manifest["marker_invariant_holds"] = raw_marker_count == eot_seen
     (out_dir / "train_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if delete_raw_after and local_file is None:
+        # the raw sha256 is in the manifest, so the file is re-obtainable; on a 97%-full
+        # disk the 1.9 GB is worth more than the convenience of keeping it
+        raw_path.unlink(missing_ok=True)
+        print(f"  removed the cached raw file ({raw_bytes:,} bytes) after hashing it")
     print(f"\nwrote {bin_path} ({bin_path.stat().st_size:,} bytes = {n_tokens:,} tokens)")
     print(f"  bytes/token {manifest['bytes_per_token']:.4f}, distinct ids "
           f"{manifest['distinct_token_ids']:,}")
@@ -344,10 +406,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--chunk-bytes", type=int, default=DEFAULT_CHUNK_BYTES)
     ap.add_argument("--no-verify", action="store_true",
                     help="skip the Hub sha256 comparison (offline use)")
+    ap.add_argument("--delete-raw-after", action="store_true",
+                    help="remove the cached raw text once it has been hashed and tokenized")
     args = ap.parse_args(argv)
 
     manifest = build_train_stream(args.out_dir, local_file=args.local_file,
-                                  chunk_bytes=args.chunk_bytes, verify=not args.no_verify)
+                                  chunk_bytes=args.chunk_bytes, verify=not args.no_verify,
+                                  delete_raw_after=args.delete_raw_after)
     if not manifest["marker_invariant_holds"]:
         print("\nFATAL: the marker invariant does not hold; the stream is not canonical",
               file=sys.stderr)

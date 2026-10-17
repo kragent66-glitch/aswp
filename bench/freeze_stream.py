@@ -133,6 +133,25 @@ def fetch_raw(repo: str, revision: str, filename: str, dest: Path) -> Path:
     return dest
 
 
+def _tokenizer_provenance(tok) -> dict:
+    """Hashes of the tokenizer artifacts, via the same helper the harness builder uses.
+
+    Deliberately not reimplemented here: two implementations of "which files identify this
+    vocabulary" is exactly how two streams end up claiming different provenance for the same
+    token ids.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from harness.data import tokenizer_provenance
+
+    provenance = tokenizer_provenance(TOKENIZER_NAME)
+    if provenance["vocab_size"] != int(tok.vocab_size):
+        raise SystemExit(
+            f"tokenizer provenance reports vocab_size {provenance['vocab_size']} but the "
+            f"freezing tokenizer reports {tok.vocab_size}"
+        )
+    return provenance
+
+
 def build_tokenizer():
     """GPT-2 BPE, fast (rust) implementation. Imported lazily so --help needs no torch."""
     from transformers import AutoTokenizer
@@ -199,7 +218,10 @@ def freeze_one(spec: StreamSpec, *, local_file: Path | None, out_dir: Path,
         "raw_sha256": raw_sha,
         "tokenizer": TOKENIZER_NAME,
         "tokenizer_equivalent_to": TOKENIZER_ALIAS,
-        "tokenizer_vocab_size": int(tok.vocab_size),
+        "tokenizer_vocab_size": tok.vocab_size,
+        # The vocabulary is an input to every token id in this stream, so the artifacts
+        # themselves are hashed. Naming the tokenizer is not the same as pinning it.
+        "tokenizer_provenance": _tokenizer_provenance(tok),
         "n_tokens": int(ids.size),
         "bytes_per_token": len(raw) / int(ids.size),
         "distinct_token_ids": int(np.unique(ids).size),
