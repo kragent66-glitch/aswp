@@ -1,39 +1,71 @@
 #!/usr/bin/env python3
 """ASWP Problem 1: exact sign-flip test resolution + power at small n.
-Model: paired differences d_i ~ N(mu, sigma). Effect size e = mu/sigma.
+
+Model: paired differences d_i ~ N(mu, sigma). Effect size e = mu / sigma, where
+sigma is SIGMA_DELTA -- the SD of the *paired differences* -- because the test
+statistic is a function of the d_i. See analysis/aswp_core.py for why
+sd_delta != sd_baseline (issue #13) and section P1f below for the consequence.
+
 Exact one-sided p = P(T* >= T), two-sided p = P(|T*| >= |T|) over 2^n sign flips.
+
+Reproducibility (issue #15 protocol, applied here too)
+-----------------------------------------------------
+seed          : SEED_POWER = 42 (analysis/aswp_core.py)
+trial count   : TRIALS = 40,000 per (n, effect) cell
+sampling      : numpy Generator (PCG64), one stream, consumed in the order the
+                tables are printed -- so the tables below are reproducible
+                exactly, not just within Monte-Carlo error
+memory budget : MEMORY_BUDGET_BYTES = 256 MiB (issue #16). The 2^n enumeration
+                is performed in trial batches sized to that budget, so peak
+                memory no longer scales with TRIALS * 2^n.
 """
+import resource
+
 import numpy as np
 
-RNG = np.random.default_rng(42)
-TRIALS = 40_000
+from aswp_core import (
+    MEMORY_BUDGET_BYTES,
+    RHO_GRID,
+    SEED_POWER,
+    TRIALS_POWER,
+    batch_size_for,
+    delta_in_delta_units,
+    exact_p_batched,
+    make_rng,
+    sd_ratio,
+    sign_matrix,
+)
 
-def sign_matrix(n):
-    """All 2^n sign assignments as rows, shape (2^n, n)."""
-    s = np.arange(2**n, dtype=np.int64)
-    bits = ((s[:, None] >> np.arange(n)[::-1]) & 1).astype(np.float64)
-    return np.where(bits == 0, -1.0, 1.0)
+RNG = make_rng(SEED_POWER)
+TRIALS = TRIALS_POWER
+
+print("=" * 78)
+print("P1 config (reproducibility)")
+print("=" * 78)
+print(f"  seed = {SEED_POWER}, trials per cell = {TRIALS:,}")
+print(f"  memory budget = {MEMORY_BUDGET_BYTES / 2**20:.0f} MiB")
+for n in (5, 6, 8, 10):
+    print(f"    n={n:>2}: 2^n={2**n:>5} sign patterns, batch = {batch_size_for(n):>6,} trials,"
+          f" {2**n * 8 + n * 8:>6,} bytes/trial")
+print("  (the previous unbroadcast-cast implementation peaked at ~3.4 GiB at n=10)")
+
 
 def exact_p(d, SIGNS, n, side="two"):
-    """Vector over trials: exact p-value for each row of d (TRIALS, n)."""
-    T = d.sum(axis=1)                       # observed stats
-    # stats for every sign assignment: broadcast (TRIALS,1,n) x (2^n,n)
-    Tstar = (d[:, None, :] * SIGNS[None, :, :]).sum(axis=2)  # (TRIALS, 2^n)
-    if side == "two":
-        p = (np.abs(Tstar) >= np.abs(T)[:, None]).mean(axis=1)
-    else:
-        p = (Tstar >= T[:, None]).mean(axis=1)
-    return p, T
+    """Exact p-values in bounded memory; identical arithmetic to the reference."""
+    return exact_p_batched(d, SIGNS, side)
+
 
 def power_at(n, effects, side, alpha, trials=TRIALS):
     SIGNS = sign_matrix(n)
     out = {}
     for e in effects:
         d = RNG.normal(loc=e, scale=1.0, size=(trials, n))
-        p, _ = exact_p(d, SIGNS, n, side)
+        p = exact_p(d, SIGNS, n, side)
         out[e] = float((p <= alpha).mean())
     return out
 
+
+print()
 print("=" * 78)
 print("P1a. MINIMUM ACHIEVABLE p (resolution table)")
 print("=" * 78)
@@ -43,7 +75,7 @@ for n in range(4, 11):
 
 print()
 print("=" * 78)
-print("P1b. POWER of exact one-sided test at alpha=0.05 (effect in baseline-SD units)")
+print("P1b. POWER of exact one-sided test at alpha=0.05 (effect in SIGMA_DELTA units)")
 print("=" * 78)
 effects = [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
 print(f"{'n':>3} " + "".join(f"{f'eff={e:>4}':>12}" for e in effects))
@@ -79,4 +111,32 @@ for n in [5, 6, 8, 10]:
     p = power_at(n, effects, "one", 0.05)
     # smallest listed effect >= 0.8
     ok = [e for e in effects if p[e] >= 0.8]
-    print(f"  n={n}: 80%+ power for effect >= {min(ok) if ok else '>2.0'} sigma")
+    print(f"  n={n}: 80%+ power for effect >= {min(ok) if ok else '>2.0'} sigma_delta")
+
+print()
+print("=" * 78)
+print("P1f. UNITS: the preregistered delta is written in sd_baseline, the test")
+print("     lives in sd_delta. delta = 1.0*sd_baseline is an effect of 1.0/r in")
+print("     sd_delta units, r = sd_delta/sd_baseline = sqrt(2(1-rho)) (issue #13).")
+print("=" * 78)
+print(f"{'rho':>5} {'r':>7} {'delta=1.0 sd_base':>18} {'= in sd_delta':>14} "
+      + "".join(f"{f'n={n}':>9}" for n in (6, 8, 10)))
+for rho in RHO_GRID:
+    r = sd_ratio(rho)
+    eff = delta_in_delta_units(1.0, rho)
+    pows = {}
+    for n in (6, 8, 10):
+        pows[n] = power_at(n, [eff], "one", 0.05)[eff]
+    print(f"{rho:>5.2f} {r:>7.4f} {1.0:>18.2f} {eff:>14.4f} "
+          + "".join(f"{pows[n]:>9.3f}" for n in (6, 8, 10)))
+print()
+print("  Interpretation: the '80% power at a 1.0*sd effect' figure is only true if")
+print("  rho is about 0.5 (r = 1). At the worst case the design predeclares")
+print("  (rho = 0, r = sqrt(2)), a 1.0*sd_baseline threshold is a 0.707*sd_delta")
+print("  effect, and the power at that threshold is the 0.707 column above — not")
+print("  the eff=1.0 column of P1b. Both columns are reproduced so the difference")
+print("  is visible rather than assumed.")
+
+print()
+print(f"P1 peak RSS: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MiB"
+      f" (budget {MEMORY_BUDGET_BYTES / 2**20:.0f} MiB)")
