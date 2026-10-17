@@ -188,6 +188,13 @@ def test_state_dict_keys_are_independent_of_wrapping():
 
 # ---------------------------------------------------------------- the loop, end to end
 def synthetic_streams(n_tokens: int = 4096) -> dict:
+    """Tiny stand-in endpoints for `train(...)`.
+
+    Pass this to *every* `train()` call in these tests. Omitting it makes the loop load the
+    real frozen streams -- 4.7M + 5.5M tokens -- and score the endpoint on both, on CPU: two
+    tests that forgot it took 1453 s and 1433 s each while every other test in this file
+    finished in under 7 s, and the whole suite went from ~2 minutes to ~25.
+    """
     rng = np.random.default_rng(0)
     ids = rng.integers(0, CANDIDATE_CONFIGS["smoke_d64_l2"].vocab_size,
                        size=n_tokens).astype(np.uint16)
@@ -477,14 +484,16 @@ def test_resume_refuses_a_checkpoint_from_a_different_arm(tmp_path):
 
     ids = train_ids(2048)
     a = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
-    train(a, device="cpu", train_ids=ids, log_every=10, checkpoint_every=1)
+    train(a, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=tmp_path / "a", log_every=10, checkpoint_every=1)
     ckpt_path = sorted(p for p in (tmp_path / "a" / a.run_id / "checkpoint").glob("step_*.pt"))[0]
 
     b = tiny_cfg(annealed_arm(0.03), tmp_path / "b", steps=2)
     fresh_model = TinyDecoder(b.model)
     before = {k: v.clone() for k, v in fresh_model.state_dict().items()}
     with pytest.raises(ValueError, match="refusing to resume"):
-        train(b, device="cpu", train_ids=ids, resume_from=ckpt_path, log_every=10)
+        train(b, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+              out_root=tmp_path / "b", resume_from=ckpt_path, log_every=10)
     # the refusal fired before loading, so the model it would have resumed into is untouched
     for k, v in fresh_model.state_dict().items():
         assert torch.equal(v, before[k]), k
@@ -513,10 +522,11 @@ def test_a_resumed_run_records_the_fingerprint_it_resumed_as(tmp_path):
 
     ids = train_ids(2048)
     cfg = tiny_cfg(baseline_arm(), tmp_path / "a", steps=2)
-    train(cfg, device="cpu", train_ids=ids, log_every=10, checkpoint_every=1,
-          stop_after=1)
+    train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=tmp_path / "a", log_every=10, checkpoint_every=1, stop_after=1)
     ckpt = tmp_path / "a" / cfg.run_id / "checkpoint" / "interrupt.pt"
-    train(cfg, device="cpu", train_ids=ids, resume_from=ckpt, log_every=10)
+    train(cfg, device="cpu", train_ids=ids, eval_streams=synthetic_streams(),
+          out_root=tmp_path / "a", resume_from=ckpt, log_every=10)
 
     events = [json.loads(line) for line in
               (tmp_path / "a" / cfg.run_id / "metrics.jsonl").read_text().splitlines()]
