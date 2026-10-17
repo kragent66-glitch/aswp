@@ -15,8 +15,8 @@ Every value below is computed, not asserted. Scripts: `analysis/p1_exact_power.p
 | 3 | Winner's curse in screen→confirm | Pre-register selection-stability check (chosen + runner-up, 2 fresh seeds) | flip on any ranking reversal; margin rule m = 0.5·SD_baseline as pre-filter |
 | 4* | δ undefined / unconfirmable | Power-consistent rule: **weak criterion, k=1** primary; **strong criterion, k=0.5** sensitivity | δ = 1.0·SD_baseline (point > δ AND one-sided 95% randomization bound > 0) |
 | 12 | Margin was `abs(z[:,0] - z[:,1])` | Margin = top-two gap over all candidates (`winner_margin`), permutation-invariant, tested | null margin median **0.691σ** (was 0.955σ) — see §P5 |
-| 13 | δ in sd_baseline vs power in sd_delta | Both SDs named; ratio r = √(2(1−ρ)) predeclared with worst case ρ=0; power recomputed at the actual δ | r ≤ √2; δ = 1.0·sd_baseline = **1.0/r** sd_delta — see §P5 |
-| 14 | One-sided test vs two-sided CI | Interval is the **one-sided 95% randomization bound** inverted from the same one-sided test | "interval excludes 0" ≡ "test rejects" (exact); type-I ≤ α — see §P6 |
+| 13 | δ in sd_baseline vs power in sd_delta | Both SDs named; ratio r = √(1+q²−2qρ) with the arm ratio q = sd_treatment/sd_baseline carried explicitly; power recomputed at the actual δ | predeclared box q ≤ 1.25, ρ ≥ 0 → r ≤ **1.6008**; δ = 1.0·sd_baseline = **1.0/r** sd_delta — see §P5 |
+| 14 | One-sided test vs two-sided CI | Interval is the **one-sided 95% randomization bound** inverted from the same one-sided test; a two-sided interval (when reported) inverts **both** tails | "interval excludes 0" ≡ "test rejects" (**exact**, not ±1%); type-I ≤ α — see §P6 |
 | 15 | p4 unseeded SciPy sampling | Seeded `numpy` Generator (`SEED_DELTA = 20260905`); seed, trials and assumptions recorded and printed | 40,000 trials/cell; reproducibility test in suite — see §P7 |
 | 16 | p1 peak ~3.3 GB | Batched enumeration to a declared memory budget, arithmetically identical output | 256 MiB statistic block; 3.4 GiB → 0.6 GiB, 130 s → 4.9 s — see §P8 |
 
@@ -202,14 +202,25 @@ That is not borne out: the one-sided test's type-I at n=5 is 0.031 (§P1b, eff=0
 column) and the composite rule's is lower still, since passing the point-estimate
 clause on pure noise is the harder condition of the two.
 
-**Power at the actual preregistered δ** (see §P5 for the unit conversion):
+**Power at the actual preregistered δ, with the arm ratio carried** (§P5; exact test,
+seed 20260905). "1.5σ" is a fixed true effect of 1.5·sd_delta; "at δ" is a true effect
+exactly equal to the threshold:
 
-| ρ | r = sd_delta/sd_baseline | δ = 1.0·sd_baseline in sd_delta | n=6 @1.5σ | n=8 @1.5σ | n=10 @1.5σ | n=8 at δ |
-|---|---|---|---|---|---|---|
-| 0.75 | 0.7071 | 1.4142 | 0.578 | 0.597 | 0.610 | 0.504 |
-| 0.50 | 1.0000 | 1.0000 | 0.853 | 0.917 | 0.944 | 0.494 |
-| 0.25 | 1.2247 | 0.8165 | 0.895 | 0.966 | 0.985 | 0.475 |
-| 0.00 | 1.4142 | 0.7071 | 0.906 | 0.975 | 0.993 | 0.443 |
+| q | ρ | r | δ in sd_delta | n=6 @1.5σ | n=8 @1.5σ | n=10 @1.5σ | n=8 at δ |
+|---|---|---|---|---|---|---|---|
+| 1.00 | 0.75 | 0.7071 | 1.4142 | 0.578 | 0.598 | 0.610 | 0.505 |
+| 1.00 | 0.50 | 1.0000 | 1.0000 | 0.857 | 0.917 | 0.942 | 0.492 |
+| 1.00 | 0.25 | 1.2247 | 0.8165 | 0.896 | 0.966 | 0.984 | 0.473 |
+| 1.00 | 0.00 | 1.4142 | 0.7071 | 0.905 | 0.976 | 0.993 | 0.444 |
+| 1.25 | 0.75 | 0.8292 | 1.2060 | 0.749 | 0.797 | 0.824 | 0.495 |
+| 1.25 | 0.50 | 1.1456 | 0.8729 | 0.886 | 0.958 | 0.975 | 0.483 |
+| 1.25 | 0.25 | 1.3919 | 0.7184 | 0.905 | 0.974 | 0.993 | 0.444 |
+| **1.25** | **0.00** | **1.6008** | **0.6247** | 0.908 | 0.979 | 0.996 | **0.408** |
+
+Carrying q changes the headline: the rule's power at a fixed 1.5·sd_delta effect
+spans **0.797 (q=1.25, ρ=0.75) to 0.979 (q=1.25, ρ=0)** at n=8, and power at the δ
+threshold spans **0.408 to 0.505**. The earlier single-number quote (~91%) sat inside
+that range at the most favourable corner.
 
 **Locked:**
 - **δ = 1.0 · sd_baseline** (SD from Phase 0/1 baseline calibration across seeds,
@@ -250,12 +261,37 @@ only when ρ = 0.5, and 0.707 at ρ = 0. Predeclared handling:
 - **Worst case ρ = 0 (r = √2) is the case the design must clear**, because ρ cannot
   be known before the treatment runs. Power is therefore reported across the ρ grid
   {0.75, 0.50, 0.25, 0.00} rather than at a single assumed value.
-- **§P1 units table** (p1 script, §P1) gives power at the δ threshold itself by ρ:
-  n=6/8/10 → 0.414/0.541/0.662 at ρ = 0, and 0.883/0.968/0.993 at ρ = 0.75. The
-  SAP's "80% power at a 1.0·SD effect" holds at **1.0·sd_delta**, not at
-  δ = 1.0·sd_baseline, unless ρ ≈ 0.5.
-- **No confirmatory outcome is used to choose r**: ρ enters only through the design
-  grid and the post-hoc reporting of the realized ratio.
+- **Arm variances are an assumption about the outcome, not an identity.** The
+  earlier revision used r = √(2(1−ρ)), which silently assumes
+  sd_treatment = sd_baseline. The general form carries the arm ratio
+  q = sd_treatment/sd_baseline:
+
+      Var(d) = Var(B) + Var(T) − 2·Cov(B,T)  ⟹  r = √(1 + q² − 2qρ)
+
+  A noise arm can plausibly have a wider seed-to-seed spread than the
+  deterministic arm, and pretending q = 1 when q > 1 flatters the design.
+- **Predeclared tolerance: q ≤ 1.25, ρ ≥ 0.** A perturbation of at most 5% of RMS,
+  applied through the same data order and seed pipeline, is not expected to inflate
+  the treatment arm's SD by more than 25%; the realized q is *reported* after the
+  runs and, if it exceeds this bound, the power statements are restated as a
+  protocol deviation rather than reinterpreted. Worst case over the box is the
+  corner (q = 1.25, ρ = 0): **r = √(1 + 1.25²) = 1.6008**.
+- **Power at the δ threshold** (p1 §P1f, n=6/8/10):
+
+  | q | ρ | r | δ in sd_delta | n=6 | n=8 | n=10 |
+  |---|---|---|---|---|---|---|
+  | 1.00 | 0.50 | 1.0000 | 1.0000 | 0.645 | 0.800 | 0.894 |
+  | 1.00 | 0.00 | 1.4142 | 0.7071 | 0.415 | 0.542 | 0.660 |
+  | 1.25 | 0.50 | 1.1456 | 0.8729 | 0.551 | 0.697 | 0.819 |
+  | **1.25** | **0.00** | **1.6008** | **0.6247** | **0.352** | **0.458** | **0.572** |
+
+  So the SAP's "80% power at a 1.0·SD effect" holds at **1.0·sd_delta**, and at the
+  δ threshold only in the most favourable corner (q = 1, ρ = 0.5). At the
+  predeclared worst case, δ is a 0.625·sd_delta effect and n=8 power at it is
+  **0.458** — the design cannot claim 80% power at its own practical threshold
+  without either more seeds or an argument that q ≈ 1 and ρ ≈ 0.5.
+- **No confirmatory outcome is used to choose r or q**: both enter only through the
+  predeclared grid and the post-hoc reporting of the realized values.
 
 ## P6. Test and interval on one convention (issue #14) — SOLVED
 
@@ -270,8 +306,19 @@ convention the two clauses are the same event:
 
     "one-sided 95% randomization bound > 0"  ≡  "one-sided sign-flip test rejects at α"
 
-verified in the test suite across n = 6, 8, 10 (exact agreement away from the p-value
-step boundaries; ≥ 99% including them). Consequences now locked:
+This is asserted as **exact equality** over n = 6, 8, 10 × μ = 0, 0.4, 0.8, 1.2, and
+separately for the rows whose p-value sits on an achievable level adjacent to α. It
+was not exact at first: the interval path re-summed the observed statistic instead of
+reading it from the enumeration, which disagreed with the test on 3 of 150 rows at
+n=8, μ=0.4 — the kind of disagreement a ±1% tolerance would have hidden. Both paths
+now read `t_obs` out of the statistic matrix.
+
+**Two-sided intervals invert both tails.** A two-sided interval is not generally
+symmetric about zero, so its upper endpoint cannot be the negation of its lower one;
+each is now inverted from its own tail. The earlier version returned `upper = −lower`,
+which failed an endpoint test on every row (0/200 valid) — it never affected the
+primary one-sided rule, but it would have misled anyone reusing it. Consequences now
+locked:
 
 - Type-I error for the complete rule is **≤ α by construction** (measured 0.0022 at
   n=8, §P4 table).
@@ -333,9 +380,10 @@ by one sign pattern — which is exactly what happened while comparing the two p
 
 1. Hypothesis: **one-sided**, justification written in (§P1).
 2. Seeds: **8 integers, generated once, written into the SAP** (min 6).
-3. δ = **1.0·sd_baseline**, reported with its **sd_delta equivalent 1.0/r**
-   (§P5); "compatible uncertainty" = **point > δ AND one-sided 95% randomization
-   bound > 0** (§P4, §P6).
+3. δ = **1.0·sd_baseline**, reported with its **sd_delta equivalent 1.0/r** under
+   the predeclared box **q ≤ 1.25, ρ ≥ 0** (§P5, worst case r = 1.6008);
+   "compatible uncertainty" = **point > δ AND one-sided 95% randomization bound > 0**
+   (§P4, §P6).
 4. Primary CI: **one-sided 95% randomization bound** (inverted sign-flip, the same
    one-sided test as the p-value); percentile bootstrap only as descriptive
    sensitivity (§P6; 126-composition quantization caveat for n=5 stays noted).

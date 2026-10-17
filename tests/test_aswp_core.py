@@ -14,6 +14,7 @@ import pytest
 
 from aswp_core import (
     MEMORY_BUDGET_BYTES,
+    Q_TOLERANCE_MAX,
     RHO_GRID,
     SEED_POWER,
     batch_size_for,
@@ -29,6 +30,7 @@ from aswp_core import (
     sign_matrix,
     top_two_indices,
     winner_margin,
+    worst_case_sd_ratio,
 )
 
 
@@ -171,6 +173,31 @@ class TestUnits:
         assert delta_in_delta_units(1.0, 0.5) == pytest.approx(1.0)
         assert delta_in_delta_units(1.0, 0.0) == pytest.approx(1 / np.sqrt(2), abs=1e-6)
 
+    def test_sd_ratio_generalizes_to_unequal_arm_variances(self):
+        # q = 1 must reproduce the equal-variance formula exactly
+        for rho in (0.0, 0.25, 0.5, 0.75):
+            assert sd_ratio(rho, 1.0) == pytest.approx(np.sqrt(2 * (1 - rho)))
+        # r = sqrt(1 + q^2 - 2 q rho)
+        assert sd_ratio(0.0, 1.25) == pytest.approx(np.sqrt(1 + 1.25 ** 2))
+        assert sd_ratio(0.5, 1.25) == pytest.approx(1.1456439, abs=1e-6)
+        assert sd_ratio(0.3, 1.5) > sd_ratio(0.3, 1.0) > sd_ratio(0.3, 0.75)
+
+    def test_arm_ratio_shrinks_the_standardized_effect(self):
+        # a wider treatment arm makes the same delta a smaller sd_delta effect,
+        # so the equal-variance assumption is not a free simplification
+        assert delta_in_delta_units(1.0, 0.0, 1.25) < delta_in_delta_units(1.0, 0.0, 1.0)
+        assert delta_in_delta_units(1.0, 0.0, 1.25) == pytest.approx(0.624692, abs=1e-5)
+        assert delta_in_delta_units(1.0, 0.0, 1.0) == pytest.approx(0.707106, abs=1e-6)
+
+    def test_worst_case_is_the_corner_of_the_predeclared_box(self):
+        assert worst_case_sd_ratio() == pytest.approx(np.sqrt(1 + Q_TOLERANCE_MAX ** 2))
+        assert worst_case_sd_ratio(1.5, 0.0) == pytest.approx(np.sqrt(1 + 2.25))
+
+    def test_rho_round_trips_at_any_arm_ratio(self):
+        for q in (0.75, 1.0, 1.25, 1.5):
+            for rho in (0.0, 0.4, 0.8):
+                assert rho_from_sd_ratio(sd_ratio(rho, q), q) == pytest.approx(rho)
+
     def test_units_are_not_interchangeable(self):
         # the specific confusion the issue describes: equal numbers, different
         # meanings.  Only rho = 0.5 makes the two units coincide.
@@ -184,20 +211,59 @@ class TestUnits:
 # --------------------------------------------------------------------------
 class TestDecisionRule:
     @pytest.mark.parametrize("n", [6, 8, 10])
-    def test_interval_exclusion_is_the_test(self, n):
-        """'one-sided 95% interval excludes 0' == 'one-sided test rejects at 0.05'."""
+    @pytest.mark.parametrize("mu", [0.0, 0.4, 0.8, 1.2])
+    def test_interval_exclusion_is_the_test(self, n, mu):
+        """'one-sided 95% interval excludes 0' == 'one-sided test rejects at 0.05'.
+
+        Asserted exactly, not approximately. The interval is the inversion of the
+        same test, so any disagreement is a defect in the inversion rather than a
+        tolerance to be papered over -- including for rows whose p-value sits on
+        an achievable level adjacent to alpha, which are reported separately
+        because they are the cases that used to disagree.
+        """
         rng = make_rng(21)
         signs = sign_matrix(n)
-        d = rng.normal(0.9, 1.0, size=(150, n))
+        d = rng.normal(mu, 1.0, size=(150, n))
         p = exact_p_batched(d, signs, "one")
         ci = randomization_ci(d, signs, 0.05, side="one")
+        assert np.array_equal(ci["lower"] > 0, p <= 0.05)
         grid = 1.0 / 2 ** n
-        # exact agreement away from the step boundary; p is a step function, so
-        # rows sitting exactly on an achievable level next to alpha can land on
-        # either side of the bisection tolerance
-        interior = np.abs(p - 0.05) > grid
-        assert np.all((ci["lower"][interior] > 0) == (p[interior] <= 0.05))
-        assert ((ci["lower"] > 0) == (p <= 0.05)).mean() >= 0.99
+        boundary = np.abs(p - 0.05) <= grid
+        if boundary.any():
+            assert np.array_equal((ci["lower"] > 0)[boundary], (p <= 0.05)[boundary])
+
+    @pytest.mark.parametrize("n", [6, 8])
+    def test_two_sided_interval_has_two_valid_endpoints(self, n):
+        """Both endpoints must be inverted from their own tail.
+
+        The earlier implementation returned ``upper = -lower``, which is only a
+        valid upper endpoint when the interval is exactly symmetric about zero.
+        Small-n sign-flip intervals are not, so the two endpoints are checked
+        independently here: ordered, bracketing the point estimate, and not each
+        other's negation.
+        """
+        rng = make_rng(26)
+        signs = sign_matrix(n)
+        d = rng.normal(0.9, 1.5, size=(200, n))
+        ci = randomization_ci(d, signs, 0.05, side="two")
+        assert np.all(ci["lower"] < ci["upper"])
+        mean = d.mean(axis=1)
+        assert np.all(mean >= ci["lower"] - 1e-9)
+        assert np.all(mean <= ci["upper"] + 1e-9)
+        assert np.all(np.abs(ci["upper"] + ci["lower"]) > 1e-6)
+
+    @pytest.mark.parametrize("n", [6, 8])
+    def test_two_sided_interval_covers_the_true_shift(self, n):
+        """Nominal 95% coverage, conservative because the grid is discrete."""
+        rng = make_rng(27)
+        signs = sign_matrix(n)
+        covered = []
+        for mu in (-1.0, -0.5, 0.0, 0.5, 1.0):
+            d = rng.normal(mu, 1.0, size=(300, n))
+            ci = randomization_ci(d, signs, 0.05, side="two")
+            covered.append((ci["lower"] <= mu) & (mu <= ci["upper"]))
+        coverage = float(np.concatenate(covered).mean())
+        assert 0.90 <= coverage <= 1.0
 
     @pytest.mark.parametrize("n", [6, 8])
     def test_two_sided_interval_is_stricter(self, n):

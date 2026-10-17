@@ -35,6 +35,7 @@ import numpy as np
 
 from aswp_core import (
     MEMORY_BUDGET_BYTES,
+    Q_TOLERANCE_MAX,
     RHO_GRID,
     SEED_DELTA,
     TRIALS_RULE,
@@ -94,9 +95,16 @@ def cells(n, k, one_sided_interval=True):
 
 print()
 print("=" * 78)
-print("P4. delta = k * sd_baseline criteria vs achievable power")
+print("P4. Thresholds k in SD_DELTA units vs achievable power")
+print("     NOTE ON UNITS: this table's k is a threshold in sd_delta -- the units the")
+print("     generated paired differences and their estimates are in. It is NOT a")
+print("     threshold in sd_baseline; the conversion delta = k * sd_baseline is")
+print("     applied in P4b, and is 1.0 only when r = 1. The earlier revision labelled")
+print("     these rows 'delta = k * sd_baseline' while comparing them against")
+print("     sd_delta-scale estimates, which read one unit as the other.")
 print("=" * 78)
-print(f"{'n':>3} {'k':>4} {'criterion':>34} " + "".join(f"{f'mu={m:.1f}':>10}" for m in MUS))
+print(f"{'n':>3} {'k':>4} {'criterion (k, mu in sd_delta)':>34} "
+      + "".join(f"{f'mu={m:.1f}':>10}" for m in MUS))
 for n in [6, 8, 10]:
     for k in [1.0, 1.5]:
         r = cells(n, k)
@@ -131,23 +139,26 @@ print("=" * 78)
 print("P4b. THE DECISION RULE UNDER THE UNIT CONVERSION (issue #13)")
 print("     delta = 1.0*sd_baseline. The rule fires on (point > delta) AND (test")
 print("     rejects), so its power depends on delta expressed in sd_delta units:")
-print("     delta_sd_delta = 1.0/r, r = sqrt(2(1-rho)).")
+print("     delta_sd_delta = 1.0/r, r = sqrt(1 + q^2 - 2*q*rho).")
 print("=" * 78)
 print("     'at 1.5 sd_delta' is the fixed realistic effect the SAP quotes;")
 print("     'at the delta' is a true effect exactly equal to the threshold.")
-print(f"{'rho':>5} {'r':>7} {'delta (sd_delta)':>17} " + "".join(f"{f'n={n} 1.5sd':>12}" for n in (6, 8, 10))
-      + f"{'n=8 at delta':>14}")
-for rho in RHO_GRID:
-    r = sd_ratio(rho)
-    delta_d = delta_in_delta_units(1.0, rho)
-    pows, at_delta = [], 0.0
-    for n in (6, 8, 10):
-        signs = sign_matrix(n)
-        pows.append(fire_rate(n, signs, mu=1.5, delta=delta_d))
-        if n == 8:
-            at_delta = fire_rate(n, signs, mu=delta_d, delta=delta_d)
-    print(f"{rho:>5.2f} {r:>7.4f} {delta_d:>17.4f} " + "".join(f"{v:>12.3f}" for v in pows)
-          + f"{at_delta:>14.3f}")
+print(f"     q = sd_treatment/sd_baseline; q = 1 is the equal-variance model, q = {Q_TOLERANCE_MAX}")
+print("     is the predeclared tolerance the design's headline claims rest on.")
+print(f"{'q':>5} {'rho':>5} {'r':>7} {'delta (sd_delta)':>17} "
+      + "".join(f"{f'n={n} 1.5sd':>12}" for n in (6, 8, 10)) + f"{'n=8 at delta':>14}")
+for q in (1.0, Q_TOLERANCE_MAX):
+    for rho in RHO_GRID:
+        r = sd_ratio(rho, q)
+        delta_d = delta_in_delta_units(1.0, rho, q)
+        pows, at_delta = [], 0.0
+        for n in (6, 8, 10):
+            signs = sign_matrix(n)
+            pows.append(fire_rate(n, signs, mu=1.5, delta=delta_d))
+            if n == 8:
+                at_delta = fire_rate(n, signs, mu=delta_d, delta=delta_d)
+        print(f"{q:>5.2f} {rho:>5.2f} {r:>7.4f} {delta_d:>17.4f} "
+              + "".join(f"{v:>12.3f}" for v in pows) + f"{at_delta:>14.3f}")
 print()
 print("  The SAP's headline ('fires ~91% of the time at a true 1.5*sd effect at n=8')")
 print("  is the rho = 0.5 column, i.e. it silently assumed r = 1, so that a")

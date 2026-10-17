@@ -61,6 +61,19 @@ RHO_REFERENCE = 0.5
 
 RHO_GRID = (0.75, 0.5, 0.25, 0.0)
 
+#: Arm-variance ratio grid: q = sd_treatment / sd_baseline.  q = 1 is the
+#: equal-variance case the earlier revision assumed silently; the grid shows what
+#: the unit conversion costs when the treatment arm is more or less variable.
+Q_GRID = (0.75, 1.0, 1.25, 1.5)
+
+#: The tolerance the design's headline power claims are conditional on.  A
+#: perturbation of at most 5% of RMS, applied through the same data order and
+#: seed pipeline, is not expected to inflate the treatment arm's seed-to-seed SD
+#: by more than 25%.  The realized q is reported after the runs; if it exceeds
+#: this tolerance the power statements are restated as a protocol deviation
+#: rather than silently reinterpreted.
+Q_TOLERANCE_MAX = 1.25
+
 
 # --------------------------------------------------------------------------
 # Sign-flip machinery
@@ -142,18 +155,25 @@ def _p_from_stats(d: np.ndarray, signs: np.ndarray, side: str) -> np.ndarray:
 
 def _p_at_shift(d: np.ndarray, shift: np.ndarray, signs: np.ndarray,
                 side: str, batch_size: int) -> np.ndarray:
-    """One-sided/two-sided sign-flip p for per-row shifts (vectorised)."""
+    """One-sided/two-sided sign-flip p for per-row shifts (vectorised).
+
+    ``t_obs`` is read from the all-plus column of each block's statistic matrix,
+    exactly as in :func:`_p_from_stats`, rather than re-summed from the centred
+    data. Re-summing lets a rounding-unit difference move the comparison for the
+    identity (and all-minus) patterns by one sign pattern, which would make the
+    interval decide differently from the p-value it is supposed to invert.
+    """
     centred = d - shift[:, None]
-    t_obs = centred.sum(axis=1)
     trials = d.shape[0]
     out = np.empty(trials, dtype=np.float64)
     for start in range(0, trials, batch_size):
         stop = min(start + batch_size, trials)
         t_star = centred[start:stop] @ signs.T
+        t_obs = t_star[:, -1]
         if side == "two":
-            out[start:stop] = (np.abs(t_star) >= np.abs(t_obs[start:stop])[:, None]).mean(axis=1)
+            out[start:stop] = (np.abs(t_star) >= np.abs(t_obs)[:, None]).mean(axis=1)
         else:
-            out[start:stop] = (t_star >= t_obs[start:stop][:, None]).mean(axis=1)
+            out[start:stop] = (t_star >= t_obs[:, None]).mean(axis=1)
     return out
 
 
@@ -173,24 +193,43 @@ def randomization_ci(d: np.ndarray, signs: np.ndarray, alpha: float = 0.05,
     d = np.atleast_2d(d)
     n = d.shape[1]
     batch = batch_size_for(n)
-    level = alpha if side == "one" else alpha / 2.0
+    mean = d.mean(axis=1)
+    span = 50.0 * d.std(axis=1) + 10.0
 
-    lo = d.mean(axis=1) - 50.0 * d.std(axis=1) - 10.0
-    hi = d.mean(axis=1) + 50.0 * d.std(axis=1) + 10.0
-    # p(shift) is non-decreasing in shift: larger shift => smaller observed
-    # statistic => the test rejects less often.  Bisect for p(shift) = level.
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        p = _p_at_shift(d, mid, signs, "one" if side == "one" else "two", batch)
-        rejecting = p <= level
-        lo = np.where(rejecting, mid, lo)
-        hi = np.where(rejecting, hi, mid)
-        if np.all(hi - lo < tol):
-            break
-    lower = hi if side == "one" else hi
+    def bisect(left: np.ndarray, right: np.ndarray, side_: str, level: float,
+               rejecting_at_right: bool) -> np.ndarray:
+        """Bisect a rejection boundary between two shifts, row-wise.
+
+        ``rejecting_at_right`` states which end is the rejecting one, so the same
+        routine serves both tails.
+        """
+        a, b = left.copy(), right.copy()
+        for _ in range(max_iter):
+            mid = 0.5 * (a + b)
+            rej = _p_at_shift(d, mid, signs, side_, batch) <= level
+            if rejecting_at_right:
+                b = np.where(rej, mid, b)
+                a = np.where(rej, a, mid)
+            else:
+                a = np.where(rej, mid, a)
+                b = np.where(rej, b, mid)
+            if np.all(b - a < tol):
+                break
+        return b if rejecting_at_right else a
+
     if side == "one":
+        # The one-sided test rejects for small shifts and stops rejecting at the
+        # bound: p(shift) is non-decreasing in shift.
+        lower = bisect(mean - span, mean, "one", alpha, rejecting_at_right=False)
         return {"lower": lower, "upper": np.full_like(lower, np.inf)}
-    return {"lower": lower, "upper": -lower}
+
+    # Two-sided: the test rejects outside a bounded interval, so the interval has
+    # two distinct endpoints. Each is inverted from its own tail -- negating the
+    # lower endpoint is not the upper endpoint unless the distribution is
+    # exactly symmetric about zero, which small-n sign-flip intervals are not.
+    lower = bisect(mean - span, mean, "two", alpha, rejecting_at_right=False)
+    upper = bisect(mean, mean + span, "two", alpha, rejecting_at_right=True)
+    return {"lower": lower, "upper": upper}
 
 
 # --------------------------------------------------------------------------
@@ -273,29 +312,52 @@ def top_two_indices(scores: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 # --------------------------------------------------------------------------
 # Effect-size units (issue #13)
 # --------------------------------------------------------------------------
-def sd_ratio(rho: float) -> float:
-    """r = sd_delta / sd_baseline for equal arm SDs, from Var(d) = 2 s^2 (1 - rho)."""
-    return float(np.sqrt(2.0 * (1.0 - rho)))
+def sd_ratio(rho: float, q: float = 1.0) -> float:
+    """r = sd_delta / sd_baseline from Var(d) = Var(B) + Var(T) - 2*Cov(B,T).
+
+    ``q = sd_treatment / sd_baseline`` is the arm-variance ratio.  The general
+    form is::
+
+        r = sqrt(1 + q^2 - 2 q rho)
+
+    which reduces to ``sqrt(2(1 - rho))`` at q = 1.  Carrying q explicitly
+    matters because equal arm variances is an *assumption about the outcome*, not
+    a mathematical identity: a noise arm can plausibly have a different
+    seed-to-seed spread than the deterministic arm it is compared against, and
+    assuming q = 1 when q > 1 makes the design look more sensitive than it is.
+    """
+    return float(np.sqrt(1.0 + q * q - 2.0 * q * rho))
 
 
-def rho_from_sd_ratio(r: float) -> float:
-    """Inverse of :func:`sd_ratio`."""
-    return float(1.0 - r * r / 2.0)
+def rho_from_sd_ratio(r: float, q: float = 1.0) -> float:
+    """Inverse of :func:`sd_ratio` in rho, for a given arm ratio q."""
+    return float((1.0 + q * q - r * r) / (2.0 * q))
 
 
-def delta_in_delta_units(delta_baseline_units: float, rho: float) -> float:
+def delta_in_delta_units(delta_baseline_units: float, rho: float, q: float = 1.0) -> float:
     """A threshold written in sd_baseline units, expressed in sd_delta units.
 
     ``delta = k * sd_baseline`` is an effect of ``k / r`` in the units the test
     lives in.  Forgetting to convert is precisely how a design ends up claiming
     more power than its deltas can deliver.
     """
-    return float(delta_baseline_units / sd_ratio(rho))
+    return float(delta_baseline_units / sd_ratio(rho, q))
 
 
-def delta_in_baseline_units(effect_delta_units: float, rho: float) -> float:
+def delta_in_baseline_units(effect_delta_units: float, rho: float, q: float = 1.0) -> float:
     """Inverse of :func:`delta_in_delta_units`."""
-    return float(effect_delta_units * sd_ratio(rho))
+    return float(effect_delta_units * sd_ratio(rho, q))
+
+
+def worst_case_sd_ratio(q_max: float | None = None, rho_min: float | None = None) -> float:
+    """Largest r the design must tolerate over the predeclared (q, rho) box.
+
+    r increases in q and decreases in rho, so the worst case sits at the corner
+    (q = q_max, rho = rho_min): ``sqrt(1 + q_max^2 - 2 q_max rho_min)``.
+    """
+    q_max = Q_TOLERANCE_MAX if q_max is None else q_max
+    rho_min = RHO_WORST_CASE if rho_min is None else rho_min
+    return sd_ratio(rho_min, q_max)
 
 
 # --------------------------------------------------------------------------

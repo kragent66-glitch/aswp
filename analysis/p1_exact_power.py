@@ -25,6 +25,7 @@ import numpy as np
 
 from aswp_core import (
     MEMORY_BUDGET_BYTES,
+    Q_TOLERANCE_MAX,
     RHO_GRID,
     SEED_POWER,
     TRIALS_POWER,
@@ -34,6 +35,7 @@ from aswp_core import (
     make_rng,
     sd_ratio,
     sign_matrix,
+    worst_case_sd_ratio,
 )
 
 RNG = make_rng(SEED_POWER)
@@ -117,25 +119,35 @@ print()
 print("=" * 78)
 print("P1f. UNITS: the preregistered delta is written in sd_baseline, the test")
 print("     lives in sd_delta. delta = 1.0*sd_baseline is an effect of 1.0/r in")
-print("     sd_delta units, r = sd_delta/sd_baseline = sqrt(2(1-rho)) (issue #13).")
+print("     sd_delta units, with r = sqrt(1 + q^2 - 2*q*rho), q = sd_treatment/")
+print("     sd_baseline (issue #13). q = 1 recovers sqrt(2(1-rho)).")
 print("=" * 78)
-print(f"{'rho':>5} {'r':>7} {'delta=1.0 sd_base':>18} {'= in sd_delta':>14} "
+print(f"{'q':>5} {'rho':>5} {'r':>7} {'delta=1.0 sd_base':>18} {'= in sd_delta':>14} "
       + "".join(f"{f'n={n}':>9}" for n in (6, 8, 10)))
-for rho in RHO_GRID:
-    r = sd_ratio(rho)
-    eff = delta_in_delta_units(1.0, rho)
-    pows = {}
-    for n in (6, 8, 10):
-        pows[n] = power_at(n, [eff], "one", 0.05)[eff]
-    print(f"{rho:>5.2f} {r:>7.4f} {1.0:>18.2f} {eff:>14.4f} "
-          + "".join(f"{pows[n]:>9.3f}" for n in (6, 8, 10)))
+for q in (1.0, Q_TOLERANCE_MAX):
+    for rho in (0.5, 0.0):
+        r = sd_ratio(rho, q)
+        eff = delta_in_delta_units(1.0, rho, q)
+        pows = {}
+        for n in (6, 8, 10):
+            pows[n] = power_at(n, [eff], "one", 0.05)[eff]
+        tag = " (equal-variance model)" if q == 1.0 else " (predeclared tolerance)"
+        print(f"{q:>5.2f} {rho:>5.2f} {r:>7.4f} {1.0:>18.2f} {eff:>14.4f} "
+              + "".join(f"{pows[n]:>9.3f}" for n in (6, 8, 10)) + tag)
 print()
-print("  Interpretation: the '80% power at a 1.0*sd effect' figure is only true if")
-print("  rho is about 0.5 (r = 1). At the worst case the design predeclares")
-print("  (rho = 0, r = sqrt(2)), a 1.0*sd_baseline threshold is a 0.707*sd_delta")
-print("  effect, and the power at that threshold is the 0.707 column above — not")
-print("  the eff=1.0 column of P1b. Both columns are reproduced so the difference")
-print("  is visible rather than assumed.")
+print(f"  Arm ratio q = sd_treatment/sd_baseline enters as r = sqrt(1 + q^2 - 2*q*rho);")
+print(f"  the grid above spans q = 1.0 to the predeclared tolerance q = {Q_TOLERANCE_MAX},")
+print(f"  at rho = 0.5 and the worst-case rho = 0. Worst case over the whole predeclared")
+print(f"  box (q <= {Q_TOLERANCE_MAX}, rho >= 0): r = {worst_case_sd_ratio():.4f}, so")
+print(f"  delta = 1.0*sd_baseline is a {delta_in_delta_units(1.0, 0.0, Q_TOLERANCE_MAX):.4f}*sd_delta effect.")
+print()
+print("  Interpretation: the '80% power at a 1.0*sd effect' figure holds only at")
+print("  r = 1, i.e. rho about 0.5 with equal arm variances. Power at the delta")
+print("  threshold falls to 0.542 at the equal-variance worst case (rho = 0) and to")
+print("  0.458 once the predeclared arm-ratio tolerance q <= 1.25 is carried: a 25%")
+print("  wider treatment arm makes delta a smaller standardized effect (0.625 vs")
+print("  0.707 sd_delta) with correspondingly less power. Both grids are reproduced")
+print("  so the difference is visible rather than assumed.")
 
 print()
 print(f"P1 peak RSS: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MiB"
