@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
-"""ASWP Problems 2 & 3: variance matching + winner's-curse sizing."""
+"""ASWP Problems 2 & 3: variance matching + winner's-curse sizing.
+
+Reproducibility
+---------------
+seed       : SEED_MATCH_CURSE = 7 (analysis/aswp_core.py)
+trial count: N = 2,000,000 screen draws for the null/selection simulations
+sampling   : numpy Generator (PCG64), one stream, consumed top-to-bottom; the
+             screen matrix z is drawn once and reused by P3a and P3d so both
+             describe the same draws.
+
+Fix (issue #12): the margin is the gap between the best and second-best score
+over ALL candidates (`winner_margin`, implemented and tested in aswp_core). The
+earlier `np.abs(z[:, 0] - z[:, 1])` measured the absolute difference between two
+fixed columns, which is not the winner-versus-runner-up margin: it is wrong in
+value whenever the argmax is not column 0, and it is invariant to which candidate
+actually won. Both quantities are printed so the size of the error is visible.
+"""
 import numpy as np
 from scipy import integrate, stats
 
-RNG = np.random.default_rng(7)
+from aswp_core import SEED_MATCH_CURSE, make_rng, winner_margin
+
+RNG = make_rng(SEED_MATCH_CURSE)
 
 print("=" * 78)
 print("P2. VARIANCE-MATCHED CONTROLS — exact multipliers")
@@ -55,19 +73,36 @@ for g in [0.0, 0.25, 0.5, 1.0, 1.5, 2.0]:
           f"({'catches tie' if g < 0.5 else 'will likely confirm'})")
 
 # --- 3c: margin rule tradeoff, single-seed screen (chosen vs runner-up) ---
-# d = chosen - runnerup ~ N(g, sigma*sqrt(2)); fail margin m => declare inconclusive
-print("\nP3c. margin rule (single-seed screen): P(screen margin < m | true gap g)")
-print("   d ~ N(g, sigma*sqrt(2))")
+# Candidates 1..k share the screen; candidate 1 carries a genuine gap g.  The
+# margin is the top-two gap of the realised screen scores, so a third candidate
+# can take either the winning or the runner-up slot.  The two-candidate
+# approximation printed alongside assumes the pair is fixed and its noise
+# independent -- that is the model the previous revision used.
+print("\nP3c. margin rule (single-seed screen): P(top-two margin < m | true gap g)")
+print("   three candidates, gap g on candidate 1; margin = max - second max")
 for m in [0.25, 0.5, 1.0]:
     row = []
     for g in [0.0, 0.5, 1.0, 1.5, 2.0]:
-        row.append(f"g={g}:{stats.norm.cdf((m-g)/(np.sqrt(2))):.0%}")
+        mu = np.array([g, 0.0, 0.0])
+        s = mu + RNG.standard_normal((N, k))
+        margin = winner_margin(s)
+        approx = stats.norm.cdf((m - g) / np.sqrt(2.0))
+        row.append(f"g={g}:{(margin < m).mean():.0%}({approx:.0%})")
     print(f"   m = {m} sigma_screen:  " + "  ".join(row))
+print("   (simulated value first; two-candidate analytic approximation in parentheses)")
 
 # --- 3d: screen-table disclosure: p(any tie beaten by luck) ---
-# under tied null, distribution of winning margin over runner-up
-d = z[:, 0:2]  # reuse: winner= c1, runner=c2 when tied
-win_margin = np.abs(z[:, 0] - z[:, 1])
+# under tied null, distribution of winning margin over runner-up, over all k
+# candidates (issue #12: was abs(z[:,0] - z[:,1]), two fixed columns)
+win_margin = winner_margin(z)
+fixed_cols = np.abs(z[:, 0] - z[:, 1])
 print("\nP3d. under global null (all candidates tied): screen winning margin vs runner-up")
-print(f"   median margin = {np.median(win_margin):.3f} sigma, P(margin < 0.5 sigma) = "
-      f"{(win_margin < 0.5).mean():.1%},  P(margin < 1 sigma) = {(win_margin < 1.0).mean():.1%}")
+print(f"   top-two margin      : median = {np.median(win_margin):.3f} sigma, "
+      f"P(margin < 0.5 sigma) = {(win_margin < 0.5).mean():.1%},  "
+      f"P(margin < 1 sigma) = {(win_margin < 1.0).mean():.1%}")
+print(f"   (old fixed-column |z0-z1|: median = {np.median(fixed_cols):.3f} sigma, "
+      f"P(<0.5) = {(fixed_cols < 0.5).mean():.1%}, P(<1) = {(fixed_cols < 1.0).mean():.1%}")
+print(f"   winner is not column 0 in {(np.argmax(z, axis=1) != 0).mean():.1%} of null draws, "
+      f"so a fixed-column difference misstates the margin in most rows")
+print(f"   margin rule as pre-filter (m = 0.5 sigma): passes {100 * (win_margin >= 0.5).mean():.1f}% "
+      f"of tied screens; at m = 1.0 sigma: {100 * (win_margin >= 1.0).mean():.1f}%")

@@ -38,19 +38,40 @@ This is deliberately a **controlled, falsifiable experiment**: a credible negati
 docs/
 ├── 01-research-protocol.md                  # methodology, arms, phases, decision criteria
 ├── 02-implementation-operations-manual.md   # reference module, unit tests, logging, checkpoints
-├── 03-statistical-analysis-plan.md          # SAP + preregistration (to be locked)
-└── 04-design-review.md                      # red-team review of the protocol (open issues)
+├── 03-statistical-analysis-plan.md          # SAP + preregistration (config fields to be locked)
+├── 04-design-review.md                      # red-team review of the protocol (historical record)
+├── 05-blocker-resolution.md                 # resolutions + regenerated values for issues #1–#16
+└── 06-preregistration-checklist.md          # what is frozen, what is open, what blocks what
+config/
+└── manifest.json                            # frozen paired seed list and per-role RNG seeds (#10)
+analysis/                                    # statistical analysis: exact sign-flip test, power,
+                                             # selection/margin, δ criteria — with tests
+tests/                                       # pytest suite for the analysis core
 ```
 
-Code (training harness, `AnnealedLinear`, Phase 0 unit-test suite) lands here once the implementation phase starts — the protocol is versioned and pushed **before** any confirmatory run, per the open-science plan.
+The statistical analysis is executable and tested today (see `analysis/` and `tests/`);
+the training harness (`AnnealedLinear`, training loop, Phase 0 gate) is **not yet written**
+and is the next milestone — see [06-preregistration-checklist.md](docs/06-preregistration-checklist.md).
 
 ## Design review & open issues
 
-The protocol went through an adversarial design review before publication; the findings are tracked as [GitHub issues](https://github.com/kragent66-glitch/aswp/issues). Known blockers that must be resolved before the SAP is locked:
+The protocol went through an adversarial design review before publication; the findings are tracked as [GitHub issues](https://github.com/kragent66-glitch/aswp/issues), and each is resolved or open in [docs/05-blocker-resolution.md](docs/05-blocker-resolution.md):
 
-- n=5 paired seeds cannot reach α=0.05 with a two-sided exact test (min p = 0.0625) — hypothesis direction or sample size must be locked
-- C4 constant-noise arm is not variance-matched (matched level ≈ 0.61·σ₀) — the annealing-specific claim needs the matched comparison
-- Screen → confirmation selection bias (winner's curse) needs a pre-registered stability check
+- ✅ **n=5 cannot reach α=0.05 two-sided** — resolved: one-sided test locked, minimum raised to n=6, target n=8
+- ✅ **C4 constant-noise arm not variance-matched** — resolved: σ_c = 0.6124·σ₀ (both arms run)
+- ✅ **Winner's curse in screen → confirm** — resolved: pre-registered selection-stability check
+- ⛔ **The SAP config fields are not locked yet** (dataset/tokenizer/validation hashes, model commit, training configuration, selected σ₀) — these cannot be filled before the harness exists and the Phase 0/1 runs produce them. No confirmatory run may start until they are.
+- ⛔ **The training harness is not written** — nothing runs on a GPU yet
+
+How to run what exists:
+
+```bash
+python -m pip install numpy scipy pytest
+python -m pytest                      # 67 tests
+python analysis/p1_exact_power.py     # resolution + power, units conversion
+python analysis/p23_match_curse.py    # variance matching, winner's curse, margin rule
+python analysis/p4_delta_criteria.py  # decision-rule fire rates, type-I error, δ under units
+```
 
 ## Open science
 
