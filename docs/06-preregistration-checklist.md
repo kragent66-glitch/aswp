@@ -8,15 +8,19 @@ what is open, and — for each open item — whether it is blocked on a **decisi
 (protocol owner) or on **work** (the harness, Phase 0, Phase 1).
 
 **Status: decision items 1–6 and 9 are resolved and committed; Phase 0 is complete on both
-CPU and GPU, and its cost measurement fixed n = 8. The release tag is published
-(`v0.1.0-preregistration`). Open before Phase 2: an external signature on the tag, a successor
-tag matching the commit the confirmatory runs execute, and the σ0 the screen must choose. An
-external review (Codex, 2026-10-17) is recorded in §5 with each finding's resolution.**
+CPU and GPU, and its cost measurement fixed n = 8. Both release tags are published —
+`v0.1.0-preregistration` (protocol and rules) and `v0.2.0-protocol-freeze`, which names the
+commit the confirmatory runs execute. Open before Phase 2: an external signature on the tag,
+and the σ0 the screen must choose. An external review (Codex, 2026-10-17) is recorded in §5
+with each finding's resolution.**
 
 Note: the SAP (`docs/03`) carried `<value>` placeholders in its Locked Configuration Fields
 until this point. That was an auditability failure in its own right — a normative document that
 does not state the values cannot pre-register anything — and the review caught it. Every field
 is now filled except σ0, which is the screen's output.
+
+Note: status annotations made *after* a tag (like this paragraph) describe where the project
+stands; they do not change any frozen rule. The protocol as committed is the version at the tag.
 
 ---
 
@@ -81,12 +85,12 @@ is now filled except σ0, which is the screen's output.
 **Remaining process and measurement steps:**
 
 8. **Signatures, commit hash, and archive tag** — the release tag is **published**:
-   `v0.1.0-preregistration`, with notes stating what it freezes and, explicitly, what it does
+   `v0.1.0-preregistration` (protocol and rules), superseded for execution by
+   **`v0.2.0-protocol-freeze`**, which names the exact commit the confirmatory runs execute and
+   carries the four external-review fixes. Both release notes state explicitly what they do
    *not* contain (σ0, any result). **Still open: an external signature/timestamp**, which needs
-   the protocol owner — the tag commits the code, but only a signed timestamp proves *when* the
-   protocol was fixed. Also open: the tag predates the runner commits, so a successor tag must
-   be cut from the commit the confirmatory runs actually execute. The external review flagged
-   this and it is a real gap: the tag must name the executed code, not the near-miss.
+   the protocol owner — a tag commits the code, but only a signed timestamp proves *when* the
+   protocol was fixed.
 9. ~~Pin the tokenizer artifacts by hash.~~ **Done.** The tokenizer is pinned by
    artifact hash at revision `607a30d783dfa663caf39e06633721c8d4cfcd7e`, and the
    provenance block is identical across the training manifest and both endpoint
