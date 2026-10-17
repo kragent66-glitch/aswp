@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import sys
 from pathlib import Path
 
@@ -26,27 +25,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 from reference_eval import aggregate, block_lengths, score_mask  # noqa: E402
-
-#: Set to 1 by the CI jobs that are *supposed* to exercise these tests. A skipped test
-#: still exits 0, so a job missing torch (or the frozen stream) would report success
-#: while never touching the code it exists to check; in strict mode the omission is a
-#: failure instead of a skip. Local runs without torch/dev data still skip cleanly.
-STRICT = os.environ.get("ASWP_BENCH_STRICT") == "1"
-
-
-def require(condition: bool, why: str) -> None:
-    if condition:
-        return
-    if STRICT:
-        pytest.fail(f"ASWP_BENCH_STRICT=1 but this test cannot run: {why}")
-    pytest.skip(why)
-
-
-def import_torch_or_skip():
-    if STRICT:
-        import torch  # noqa: F401  -- a missing dependency must fail the job, not skip
-        return torch
-    return pytest.importorskip("torch")
+from _strict import STRICT, import_torch_or_skip, require  # noqa: E402
 
 
 def frozen_pair() -> tuple[dict, Path]:
